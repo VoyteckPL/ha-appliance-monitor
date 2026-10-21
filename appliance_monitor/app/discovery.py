@@ -37,7 +37,7 @@ def discovery_messages(a):
         }),
         ("binary_sensor", "running", {
             "name": "Pracuje", "unique_id": f"am_{cid}_running", "state_topic": t["running"],
-            "payload_on": "ON", "payload_off": "OFF", "device_class": "running",
+            "payload_on": "ON", "payload_off": "OFF", "device_class": "power",
         }),
         ("sensor", "energy", {
             "name": "Energia cyklu", "unique_id": f"am_{cid}_energy", "state_topic": t["energy"],
