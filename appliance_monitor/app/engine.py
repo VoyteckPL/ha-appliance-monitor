@@ -23,7 +23,7 @@ PRESETS = {
     "dishwasher": {
         "label": "Zmywarka", "icon": "mdi:dishwasher",
         "start_threshold": 10, "start_delay": 60,
-        "stop_threshold": 4, "stop_delay": 900,
+        "stop_threshold": 4, "stop_delay": 180,
         "reset_after": 120, "min_duration": 900,
     },
     "other": {
