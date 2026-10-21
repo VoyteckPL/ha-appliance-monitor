@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Urządzenia</title>
+<style>
+  :root {
+    --bg:#f4f5f7; --card:#fff; --text:#1c1e21; --muted:#6b7280; --line:#e3e5e8;
+    --accent:#2f80ed; --run:#1f9d55; --done:#d97706; --danger:#dc2626; --pw:#2f80ed;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#111317; --card:#1b1e24; --text:#e8eaed; --muted:#9aa0a6; --line:#2c3038;
+            --accent:#5b9dff; --run:#3ccf7a; --done:#f0a030; --danger:#f05a5a; --pw:#5b9dff; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
+  header { display:flex; align-items:center; justify-content:space-between; padding:16px 16px 8px; max-width:900px; margin:0 auto; }
+  h1 { font-size:20px; margin:0; }
+  main { max-width:900px; margin:0 auto; padding:8px 16px 40px; display:grid; gap:12px; }
+  button { font:inherit; cursor:pointer; border:1px solid var(--line); background:var(--card); color:var(--text); padding:8px 14px; border-radius:10px; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  button.danger { color:var(--danger); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px; }
+  .row { display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; }
+  .name { font-weight:600; font-size:17px; }
+  .badge { padding:3px 10px; border-radius:999px; font-size:13px; font-weight:600; background:var(--line); color:var(--muted); }
+  .badge.running { background:color-mix(in srgb,var(--run) 20%,transparent); color:var(--run); }
+  .badge.finished { background:color-mix(in srgb,var(--done) 20%,transparent); color:var(--done); }
+  .muted { color:var(--muted); } .small { font-size:12.5px; }
+  .stats { display:flex; gap:18px; flex-wrap:wrap; margin:8px 0 4px; }
+  .stats b { font-size:18px; }
+  .chart { width:100%; height:70px; display:block; margin-top:6px; }
+  .chart .pw { fill:none; stroke:var(--pw); stroke-width:1.6; vector-effect:non-scaling-stroke; }
+  .chart .th { stroke-width:1; stroke-dasharray:4 3; vector-effect:non-scaling-stroke; }
+  .chart .th.start { stroke:var(--run); } .chart .th.stop { stroke:var(--done); }
+  .axis { display:flex; justify-content:space-between; }
+  .hist { margin-top:8px; border-top:1px solid var(--line); padding-top:6px; }
+  .banner { background:color-mix(in srgb,var(--done) 18%,transparent); border:1px solid var(--done); border-radius:10px; padding:10px 12px; }
+  .empty { text-align:center; padding:40px 16px; }
+  dialog { border:none; border-radius:16px; padding:0; width:min(560px,94vw); background:var(--card); color:var(--text); }
+  dialog::backdrop { background:rgba(0,0,0,.5); }
+  form { padding:18px; display:grid; gap:12px; max-height:86vh; overflow:auto; }
+  label { display:grid; gap:4px; font-size:13px; color:var(--muted); }
+  input[type=text], input[type=number], select, textarea {
+    font:inherit; padding:9px 10px; border:1px solid var(--line); border-radius:9px; background:var(--bg); color:var(--text); width:100%; }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  fieldset { border:1px solid var(--line); border-radius:10px; margin:0; padding:10px 12px; display:grid; gap:8px; }
+  legend { padding:0 6px; color:var(--muted); font-size:13px; }
+  .chk { display:flex; align-items:center; gap:8px; color:var(--text); font-size:15px; }
+  .actions { display:flex; gap:8px; justify-content:flex-end; flex-wrap:wrap; }
+  .hint { font-size:12px; color:var(--muted); margin-top:-6px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Urządzenia</h1>
+  <button class="primary" id="add">+ Dodaj</button>
+</header>
+<main id="list"></main>
+
+<dialog id="dlg">
+  <form method="dialog" id="form">
+    <div class="row"><b id="dlg-title">Nowe urządzenie</b></div>
+    <div class="grid2">
+      <label>Rodzaj
+        <select id="f_preset"></select>
+      </label>
+      <label>Nazwa
+        <input type="text" id="f_name" maxlength="40" placeholder="np. Pralka">
+      </label>
+    </div>
+    <label>Czujnik mocy (gniazdko)
+      <select id="f_entity"></select>
+    </label>
+
+    <fieldset>
+      <legend>Wykrywanie startu</legend>
+      <div class="grid2">
+        <label>Próg startu (W)<input type="number" id="f_start_th" step="0.5" min="0.1"></label>
+        <label>Utrzymany przez (s)<input type="number" id="f_start_delay" step="5" min="0"></label>
+      </div>
+    </fieldset>
+    <fieldset>
+      <legend>Wykrywanie końca</legend>
+      <div class="grid2">
+        <label>Próg końca (W)<input type="number" id="f_stop_th" step="0.5" min="0"></label>
+        <label>Poniżej progu przez (min)<input type="number" id="f_stop_delay" step="0.5" min="0.1"></label>
+      </div>
+      <div class="hint">Ustaw dłużej niż najdłuższa przerwa w środku cyklu, inaczej koniec wykryje się za wcześnie.</div>
+      <div class="grid2">
+        <label>Min. czas cyklu (min)<input type="number" id="f_min_dur" step="1" min="0"></label>
+        <label>Wróć do „czeka" po (min)<input type="number" id="f_reset" step="5" min="1"></label>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Powiadomienia</legend>
+      <div id="f_targets"></div>
+      <label class="chk"><input type="checkbox" id="f_n_start"> Powiadom o starcie</label>
+      <label>Treść przy starcie<input type="text" id="f_msg_start"></label>
+      <label class="chk"><input type="checkbox" id="f_n_finish"> Powiadom o zakończeniu</label>
+      <label>Treść przy zakończeniu<input type="text" id="f_msg_finish"></label>
+      <div class="hint">Możesz użyć: {name} {duration} {energy}</div>
+      <div><button type="button" id="f_test">Wyślij testowe powiadomienie</button></div>
+    </fieldset>
+
+    <div id="f_err" class="small" style="color:var(--danger)"></div>
+    <div class="actions">
+      <button type="button" class="danger" id="f_del" hidden>Usuń</button>
+      <button type="button" id="f_cancel">Anuluj</button>
+      <button type="button" class="primary" id="f_save">Zapisz</button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const LABEL = {idle:'Czeka', running:'Pracuje', finished:'Zakończone'};
+let state = {appliances:[], mqtt:false, ha_ok:true};
+let options = null;
+let editingId = null;
+
+async function api(path, method='GET', body) {
+  const r = await fetch(path, {method, headers:{'Content-Type':'application/json'}, body: body ? JSON.stringify(body) : undefined});
+  if (!r.ok) throw new Error((await r.text()) || r.statusText);
+  return r.status === 204 ? null : r.json();
+}
+
+const fmtDur = s => { s = Math.max(0, Math.round(s)); const h = Math.floor(s/3600), m = Math.floor(s%3600/60);
+  return h ? `${h} h ${m} min` : (s >= 60 ? `${m} min` : `${s} s`); };
+const fmtAgo = ts => fmtDur(Date.now()/1000 - ts) + ' temu';
+const fmtTime = ts => new Date(ts*1000).toLocaleString('pl-PL', {day:'numeric', month:'short', hour:'2-digit', minute:'2-digit'});
+
+function chart(a) {
+  const s = a.samples, c = a.cfg, W = 300, H = 70;
+  if (s.length < 2) return '<div class="muted small">Zbieram dane do wykresu…</div>';
+  const t0 = s[0][0], span = Math.max(s[s.length-1][0] - t0, 1);
+  const ymax = Math.max(...s.map(p => p[1]), c.start_threshold * 1.6, 5) * 1.1;
+  const X = t => ((t - t0) / span * W).toFixed(1), Y = v => (H - v / ymax * H).toFixed(1);
+  const pts = s.map(p => X(p[0]) + ',' + Y(p[1])).join(' ');
+  return `<svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+    <line class="th start" x1="0" x2="${W}" y1="${Y(c.start_threshold)}" y2="${Y(c.start_threshold)}"/>
+    <line class="th stop" x1="0" x2="${W}" y1="${Y(c.stop_threshold)}" y2="${Y(c.stop_threshold)}"/>
+    <polyline class="pw" points="${pts}"/></svg>
+    <div class="axis small muted"><span>${fmtDur(span)} temu</span><span>zielona: próg startu · pomarańczowa: próg końca</span><span>teraz</span></div>`;
+}
+
+function card(a) {
+  const c = a.cfg;
+  let stats = `<div>Moc<br><b>${a.power == null ? '—' : a.power.toFixed(1) + ' W'}</b></div>`;
+  if (a.state === 'running') {
+    stats += `<div>Trwa<br><b>${fmtDur(a.elapsed_s || 0)}</b></div><div>Zużycie<br><b>${((a.energy_wh||0)/1000).toFixed(2)} kWh</b></div>`;
+  } else if (a.last_cycle) {
+    stats += `<div>Ostatni cykl<br><b>${fmtDur(a.last_cycle.duration_s)}</b></div><div>Zużycie<br><b>${(a.last_cycle.energy_wh/1000).toFixed(2)} kWh</b></div>`;
+  }
+  let sub = '';
+  if (a.state === 'finished' && a.finished_at) sub = `<div class="small muted">Zakończono ${fmtAgo(a.finished_at)}</div>`;
+  const warn = a.sensor_ok ? '' : `<div class="small" style="color:var(--danger)">Brak odczytu z czujnika ${esc(c.power_entity)}</div>`;
+  const hist = a.history.length ? `<div class="hist small muted">${a.history.map(h =>
+    `<div>${fmtTime(h.start)} · ${fmtDur(h.duration_s)} · ${(h.energy_wh/1000).toFixed(2)} kWh</div>`).join('')}</div>` : '';
+  return `<div class="card">
+    <div class="row"><span class="name">${esc(c.name)}</span>
+      <span><span class="badge ${a.state}">${LABEL[a.state]}</span> <button data-edit="${esc(a.id)}">Ustawienia</button></span></div>
+    <div class="stats">${stats}</div>${sub}${warn}${chart(a)}${hist}</div>`;
+}
+
+function render() {
+  const list = $('#list');
+  let html = '';
+  if (!state.ha_ok && state.appliances.length) html += '<div class="banner">Brak połączenia z Home Assistant, odczyty chwilowo niedostępne.</div>';
+  if (!state.mqtt) html += '<div class="banner">Brak połączenia z brokerem MQTT. Panel i powiadomienia działają, ale encje w HA się nie pojawią. Zainstaluj i uruchom aplikację Mosquitto, a potem zrestartuj tę aplikację.</div>';
+  html += state.appliances.length ? state.appliances.map(card).join('')
+    : '<div class="card empty"><p>Nie ma jeszcze żadnych urządzeń.</p><button class="primary" id="add2">+ Dodaj pierwsze</button></div>';
+  list.innerHTML = html;
+  list.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => openForm(b.dataset.edit));
+  const a2 = $('#add2'); if (a2) a2.onclick = () => openForm(null);
+}
+
+async function refresh() {
+  try { state = await api('api/appliances'); render(); } catch (e) { /* chwilowy błąd, próbujemy dalej */ }
+}
+
+// ---------- formularz ----------
+function fillPreset(key, keepName) {
+  const p = options.presets[key];
+  $('#f_start_th').value = p.start_threshold; $('#f_start_delay').value = p.start_delay;
+  $('#f_stop_th').value = p.stop_threshold; $('#f_stop_delay').value = +(p.stop_delay / 60).toFixed(2);
+  $('#f_min_dur').value = Math.round(p.min_duration / 60); $('#f_reset').value = p.reset_after;
+  if (!keepName && !$('#f_name').value) $('#f_name').value = p.label;
+}
+
+async function openForm(id) {
+  $('#f_err').textContent = ''; $('#f_err').style.color = 'var(--danger)';
+  try { options = await api('api/options'); } catch (e) { alert(e.message); return; }
+  editingId = id;
+  const a = id ? state.appliances.find(x => x.id === id) : null;
+  const c = a ? a.cfg : null;
+  $('#dlg-title').textContent = c ? 'Ustawienia: ' + c.name : 'Nowe urządzenie';
+  $('#f_del').hidden = !c;
+  $('#f_preset').innerHTML = Object.entries(options.presets).map(([k, p]) => `<option value="${k}">${esc(p.label)}</option>`).join('');
+  $('#f_entity').innerHTML = '<option value="">Wybierz…</option>' + options.sensors.map(s =>
+    `<option value="${esc(s.entity_id)}">${esc(s.name)} (${esc(s.state)} ${esc(s.unit)})</option>`).join('');
+  const sel = c ? c.notify_targets : [];
+  $('#f_targets').innerHTML = options.notify.length ? options.notify.map(n =>
+    `<label class="chk"><input type="checkbox" value="${esc(n.service)}" ${sel.includes(n.service) ? 'checked' : ''}> ${esc(n.label)}</label>`).join('')
+    : '<div class="muted small">Nie znaleziono usług powiadomień (zainstaluj aplikację HA Companion na telefonie).</div>';
+  if (c) {
+    $('#f_preset').value = c.preset; $('#f_name').value = c.name; $('#f_entity').value = c.power_entity;
+    $('#f_start_th').value = c.start_threshold; $('#f_start_delay').value = c.start_delay;
+    $('#f_stop_th').value = c.stop_threshold; $('#f_stop_delay').value = +(c.stop_delay / 60).toFixed(2);
+    $('#f_min_dur').value = Math.round(c.min_duration / 60); $('#f_reset').value = c.reset_after;
+    $('#f_n_start').checked = c.notify_start; $('#f_n_finish').checked = c.notify_finish;
+    $('#f_msg_start').value = c.msg_start; $('#f_msg_finish').value = c.msg_finish;
+  } else {
+    $('#f_preset').value = 'washer'; $('#f_name').value = ''; fillPreset('washer');
+    $('#f_n_start').checked = false; $('#f_n_finish').checked = true;
+    $('#f_msg_start').value = options.default_msg_start; $('#f_msg_finish').value = options.default_msg_finish;
+  }
+  $('#dlg').showModal();
+}
+
+function readForm() {
+  return {
+    preset: $('#f_preset').value, name: $('#f_name').value.trim(), power_entity: $('#f_entity').value,
+    start_threshold: +$('#f_start_th').value, start_delay: +$('#f_start_delay').value,
+    stop_threshold: +$('#f_stop_th').value, stop_delay: Math.round(+$('#f_stop_delay').value * 60),
+    min_duration: Math.round(+$('#f_min_dur').value * 60), reset_after: +$('#f_reset').value,
+    notify_targets: [...document.querySelectorAll('#f_targets input:checked')].map(i => i.value),
+    notify_start: $('#f_n_start').checked, notify_finish: $('#f_n_finish').checked,
+    msg_start: $('#f_msg_start').value, msg_finish: $('#f_msg_finish').value,
+  };
+}
+
+$('#add').onclick = () => openForm(null);
+$('#f_cancel').onclick = () => $('#dlg').close();
+$('#f_preset').onchange = () => { if (!editingId) { const p = options.presets[$('#f_preset').value];
+  const prevLabels = Object.values(options.presets).map(x => x.label);
+  if (!$('#f_name').value || prevLabels.includes($('#f_name').value)) $('#f_name').value = p.label;
+  fillPreset($('#f_preset').value, true); } };
+$('#f_save').onclick = async () => {
+  $('#f_err').textContent = ''; $('#f_err').style.color = 'var(--danger)';
+  try {
+    const body = readForm();
+    if (editingId) await api('api/appliances/' + editingId, 'PUT', body); else await api('api/appliances', 'POST', body);
+    $('#dlg').close(); await refresh();
+  } catch (e) { $('#f_err').textContent = e.message; }
+};
+$('#f_del').onclick = async () => {
+  if (!confirm('Usunąć to urządzenie wraz z historią i encjami w HA?')) return;
+  try { await api('api/appliances/' + editingId, 'DELETE'); $('#dlg').close(); await refresh(); }
+  catch (e) { $('#f_err').textContent = e.message; }
+};
+$('#f_test').onclick = async () => {
+  $('#f_err').textContent = '';
+  try { await api('api/test_notify', 'POST', {name: $('#f_name').value || 'Test', targets: readForm().notify_targets});
+    $('#f_err').style.color = 'var(--run)'; $('#f_err').textContent = 'Wysłano.'; }
+  catch (e) { $('#f_err').style.color = 'var(--danger)'; $('#f_err').textContent = e.message; }
+};
+
+refresh();
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>
