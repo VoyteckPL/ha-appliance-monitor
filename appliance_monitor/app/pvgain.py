@@ -1,4 +1,111 @@
 """Ile daje fotowoltaika: oszczędność na energii zużytej na miejscu + depozyt za oddaną. Czysta logika."""
+import io
+import re
+import zipfile
+import xml.etree.ElementTree as ET
+
+
+def parse_production(raw):
+    """Eksport z aplikacji falownika (xlsx, np. Solarman 'Statystyki roczne/miesięczne').
+    Zwraca {'YYYY': kWh} albo {'YYYY-MM': kWh}. Bez zewnętrznych bibliotek (xlsx = zip z XML)."""
+    try:
+        z = zipfile.ZipFile(io.BytesIO(raw))
+    except zipfile.BadZipFile:
+        raise ValueError("To nie jest plik xlsx.")
+    ns = {"m": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+    names = z.namelist()
+    shared = []
+    if "xl/sharedStrings.xml" in names:
+        for si in ET.fromstring(z.read("xl/sharedStrings.xml")).findall("m:si", ns):
+            shared.append("".join(t.text or "" for t in si.iter("{%s}t" % ns["m"])))
+    sheet = sorted(n for n in names if re.fullmatch(r"xl/worksheets/sheet\d+\.xml", n))
+    if not sheet:
+        raise ValueError("Pusty plik xlsx.")
+    rows = []
+    for row in ET.fromstring(z.read(sheet[0])).iter("{%s}row" % ns["m"]):
+        cells = {}
+        for c in row.findall("m:c", ns):
+            col = re.match(r"[A-Z]+", c.get("r", "")).group(0)
+            t = c.get("t")
+            if t == "s":
+                v = c.find("m:v", ns)
+                val = shared[int(v.text)] if v is not None and v.text else ""
+            elif t == "inlineStr":
+                val = "".join(x.text or "" for x in c.iter("{%s}t" % ns["m"]))
+            else:
+                v = c.find("m:v", ns)
+                val = v.text if v is not None and v.text else ""
+            cells[col] = val.replace("\xa0", " ").strip()
+        rows.append(cells)
+    if not rows:
+        raise ValueError("Plik jest pusty.")
+    head = {k: v.lower() for k, v in rows[0].items()}
+    prod_col = next((k for k, v in head.items() if v.startswith("produkcj")), None)
+    time_col = next((k for k, v in head.items() if "czas" in v and "stref" not in v), None)
+    if not prod_col or not time_col:
+        raise ValueError("Nie znalazłem kolumn z czasem i produkcją (kWh). To eksport „Statystyki roczne/miesięczne” z aplikacji falownika?")
+    out = {}
+    for r in rows[1:]:
+        t = re.sub(r"[/.]", "-", r.get(time_col, ""))
+        m = re.match(r"(\d{4})(?:-(\d{1,2}))?", t)
+        try:
+            kwh = float(r.get(prod_col, "").replace(",", "."))
+        except ValueError:
+            continue
+        if not m or kwh < 0:
+            continue
+        out[m.group(1) if not m.group(2) else "%s-%02d" % (m.group(1), int(m.group(2)))] = kwh
+    if not out:
+        raise ValueError("W pliku nie ma wierszy z produkcją.")
+    return out
+
+
+def annual(prod, months, cost=0.0, pv_start=None):
+    """Zysk rok po roku z rocznej produkcji i faktur (bez założeń o zużyciu sprzed paneli).
+    Zysk = (produkcja − oddane) × średnia cena zakupu + depozyt. Pompa basenowa to zwykłe zużycie własne."""
+    inv = [m for m in months if m["export_kwh"] is not None]
+    if not inv or not prod:
+        return None
+    last_inv = max(m["month"] for m in inv)
+    starts = [m["month"] for m in inv if m["export_kwh"] > 5]
+    pv_start = pv_start or (min(starts) if starts else None)
+    by_y = {}
+    for m in inv:
+        by_y.setdefault(m["month"][:4], []).append(m)
+    rows = []
+    for y in sorted(prod):
+        if len(y) != 4:
+            continue
+        have = {m["month"]: m for m in by_y.get(y, [])}
+        first = max(y + "-01", pv_start or y + "-01")
+        last = min(y + "-12", last_inv)
+        need = [f"{y}-{i:02d}" for i in range(1, 13) if first <= f"{y}-{i:02d}" <= last]
+        miss = [mo for mo in need if mo not in have]
+        ms = [have[mo] for mo in need if mo in have]
+        if not ms:
+            continue
+        E = sum(m["export_kwh"] for m in ms)
+        P = prod[y]
+        S = max(P - E, 0.0)
+        w = [(m["import_price"], m["export_kwh"]) for m in ms if m["import_price"] > 0]
+        sw = sum(x[1] for x in w)
+        p = sum(a * b for a, b in w) / sw if sw > 0 else (sum(a for a, _ in w) / len(w) if w else 0.0)
+        dep = sum(m["deposit_value"] for m in ms)
+        rows.append({"year": y, "production": round(P, 1), "export": round(E, 1), "self": round(S, 1),
+                     "price": round(p, 4), "avoided": round(S * p, 2), "deposit": round(dep, 2),
+                     "benefit": round(S * p + dep, 2), "months": len(ms), "missing": miss,
+                     "partial": y == last_inv[:4] and last_inv < y + "-12"})
+    if not rows:
+        return None
+    cum = 0.0
+    for r in rows:
+        cum += r["benefit"]
+        r["cumulative"] = round(cum, 2)
+    full = [r for r in rows if not r["partial"] and not r["missing"] and r["months"] == 12]
+    ref = full[-1]["benefit"] if full else (rows[-1]["benefit"] / max(rows[-1]["months"], 1) * 12)
+    tot = {"benefit": round(cum, 2), "cost": cost, "per_year": round(ref, 2), "years": len(rows),
+           "left_years": round((cost - cum) / ref, 1) if cost > cum and ref > 0 else 0.0}
+    return {"years": rows, "total": tot}
 
 
 def compute(prod, months, cost=0.0):

@@ -165,6 +165,7 @@ class Monitor:
         self.pending = load_json(DATA / "pending.json", [])
         self.bills = self.migrate_bills(load_json(DATA / "bills.json", {}))
         self.bills_csv = load_json(DATA / "bills_csv.json", {})
+        self.pv_prod = load_json(DATA / "pv_production.json", {})
         for c in cfgs:
             for k, v in CFG_DEFAULTS.items():  # urządzenia zapisane w starszych wersjach
                 c.setdefault(k, v)
@@ -814,17 +815,31 @@ async def api_pv(request):
     ent = mon.settings.get("pv_entity")
     cost = float(mon.settings.get("pv_cost") or 0)
     months = billslib.by_month(mon.bills.values())
-    out = {"configured": bool(ent), "estimate": pvgain.estimate(mon.bills_csv, months, mon.settings.get("pv_start") or None, cost)}
+    out = {"configured": bool(ent), "annual": pvgain.annual(mon.pv_prod, months, cost, mon.settings.get("pv_start") or None),
+           "has_production": bool(mon.pv_prod), "estimate": pvgain.estimate(mon.bills_csv, months, mon.settings.get("pv_start") or None, cost)}
     if ent:
         try:
             prod = await mon.pv_production(ent)
             if not prod:
                 raise RuntimeError("HA nie ma długoterminowych statystyk dla tej encji (musi być licznik energii w kWh)")
+            prod = {**{k: v for k, v in mon.pv_prod.items() if len(k) == 7}, **prod}
             out["exact"] = pvgain.compute(prod, months, cost)
             out["first_data"] = min(prod)
         except Exception as e:
             out["exact_error"] = f"Nie mogę pobrać statystyk produkcji z HA: {e}"
     return web.json_response(out)
+
+
+async def api_pv_production(request):
+    """Eksport produkcji z aplikacji falownika (xlsx): sumy roczne lub miesięczne."""
+    mon = request.app["mon"]
+    try:
+        data = pvgain.parse_production(await request.read())
+    except ValueError as e:
+        raise web.HTTPBadRequest(text=str(e))
+    mon.pv_prod.update(data)
+    save_json(DATA / "pv_production.json", mon.pv_prod)
+    return web.json_response({"saved": len(data), "keys": sorted(data)})
 
 
 async def api_bills_csv(request):
@@ -1073,6 +1088,7 @@ async def make_app():
     app.router.add_get("/api/pv", api_pv)
     app.router.add_post("/api/bills", api_bills_post)
     app.router.add_post("/api/bills/csv", api_bills_csv)
+    app.router.add_post("/api/pv/production", api_pv_production)
     app.router.add_delete("/api/bills/{month}", api_bills_delete)
     app.router.add_get("/api/settings", api_settings_get)
     app.router.add_put("/api/settings", api_settings_put)

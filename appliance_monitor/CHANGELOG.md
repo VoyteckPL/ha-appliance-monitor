@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.13.0
+- Zysk fotowoltaiki rok po roku z eksportu produkcji z aplikacji falownika (xlsx, np. Solarman „Statystyki roczne”) i faktur: (produkcja − oddane) × cena zakupu + depozyt. Nie zakłada niczego o zużyciu sprzed paneli, basen liczy się jako zwykłe zużycie własne. Wgrywasz ten sam przyciskiem co faktury.
+- Eksport miesięczny z tej samej aplikacji też jest przyjmowany i daje dokładny wykres miesięczny.
+- Dawny szacunek z samych faktur zwinięty jako porównawczy (zaniża zysk).
+
 ## 0.12.0
 - Zysk z fotowoltaiki od początku instalacji, bez falownika: szacunek z samych faktur (porównanie z kosztem prądu przy zużyciu z lat przed panelami), wykres narastająco z linią kosztu instalacji i zwrotem z inwestycji, wykres miesięczny, klikalne miesiące. Początek instalacji wykrywany z faktur, do zmiany ręcznie.
 - Dokładny zysk z licznika falownika pokazywany osobno, od miesiąca, od którego HA zapisuje jego statystyki.

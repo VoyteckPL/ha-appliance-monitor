@@ -153,7 +153,7 @@
   <div class="card" id="st_bar">
     <div class="grid2">
       <label>Okres<select id="st_period"></select></label>
-      <label>Dodaj faktury (PDF) lub zestawienie rozliczeń (CSV) z Energi<input type="file" id="b_file" accept="application/pdf,.csv,text/csv" multiple></label>
+      <label>Dodaj faktury (PDF), zestawienie rozliczeń (CSV) z Energi lub produkcję z falownika (xlsx)<input type="file" id="b_file" accept="application/pdf,.csv,text/csv,.xlsx" multiple></label>
     </div>
     <div id="b_msg" class="small"></div>
   </div>
@@ -713,6 +713,20 @@ function roiBox(total, cost, avg) {
     ? pvBox('accent', '🎯', `Zwrot z inwestycji (${zl(cost)}): <b>${Math.round(total / cost * 100)}%</b>. Przy średnim zysku ${zl(avg)} miesięcznie (ostatnie 12 mies.) zostało ok. <b>${(left / Math.max(avg, 1) / 12).toFixed(1).replace('.', ',')} roku</b>.`)
     : pvBox('run', '🎉', `Instalacja <b>już się zwróciła</b> i zarobiła ponad koszt (${zl(cost)}): <b>+${zl(-left)}</b>.`);
 }
+function annualSection(a, hasProd) {
+  if (!a) return `<div class="banner">${hasProd ? 'Wgraj faktury PDF z lat, w których instalacja działała.' : 'Wgraj eksport rocznej produkcji z aplikacji falownika (xlsx) wyżej, a policzę zysk rok po roku.'}</div>`;
+  const t = a.total, ys = a.years, pl = v => Math.round(v).toLocaleString('pl-PL'), mx = Math.max(...ys.map(y => y.benefit), 1);
+  const rows = ys.map(y => `<tr><td><b>${y.year}</b>${y.partial ? ' <span class="muted small">(do dziś)</span>' : ''}${y.missing.length ? ` <span class="muted small" title="Brak faktur: ${esc(y.missing.join(', '))}">⚠ ${y.months} mies.</span>` : ''}</td>
+    <td>${pl(y.production)} kWh</td><td>${pl(y.self)} kWh</td><td>${pl(y.export)} kWh</td>
+    <td style="min-width:120px"><div style="display:flex;height:12px;border-radius:3px;overflow:hidden;width:${Math.max(y.benefit / mx * 100, 2)}%"><i style="flex:${y.avoided};background:var(--run)"></i><i style="flex:${y.deposit};background:var(--accent)"></i></div></td>
+    <td><b>${zl(y.benefit)}</b></td></tr>`).join('');
+  return `<div class="sec" style="margin-top:0">Zysk rok po roku (z produkcji i faktur)</div>
+    ${pvBox('run', '☀️', `Fotowoltaika dała Ci łącznie <b>${zl(t.benefit)}</b>, w pełnym roku około <b>${zl(t.per_year)}</b>.`)}
+    ${t.cost > 0 ? (t.left_years > 0 ? pvBox('accent', '🎯', `Zwrot z inwestycji (${zl(t.cost)}): <b>${Math.round(t.benefit / t.cost * 100)}%</b>. Przy takim tempie zostało ok. <b>${String(t.left_years).replace('.', ',')} roku</b>.`) : pvBox('run', '🎉', `Instalacja <b>już się zwróciła</b>: <b>+${zl(t.benefit - t.cost)}</b> ponad koszt (${zl(t.cost)}).`)) : ''}
+    <div style="overflow-x:auto"><table class="stt" style="width:100%"><thead><tr><th>Rok</th><th>Produkcja</th><th>Zużyte u siebie</th><th>Oddane</th><th></th><th>Zysk</th></tr></thead><tbody>${rows}</tbody></table></div>
+    ${legend([['var(--run)', 'zaoszczędzone na własnym zużyciu (z basenem)'], ['var(--accent)', 'depozyt za oddaną']])}
+    <div class="hint">Zysk = (produkcja − oddane do sieci) × cena zakupu + depozyt z faktur. Nie zakłada niczego o zużyciu sprzed paneli.</div>`;
+}
 function estSection(e) {
   if (!e) return `<div class="banner">Do oszacowania zysku potrzebuję faktur PDF z okresu, w którym instalacja już działała (z oddaną energią). Wgraj je wyżej.</div>`;
   if (e.error) return `<div class="banner">${esc(e.error)}</div>`;
@@ -749,7 +763,7 @@ async function pvCard() {
   let r;
   try { r = await api('api/pv'); } catch (e) { return statCard('Fotowoltaika: ile zarobiłeś', `<div class="banner">${esc(e.message)}</div>`); }
   const t = (r.estimate && r.estimate.total) || {};
-  let html = estSection(r.estimate);
+  let html = annualSection(r.annual, r.has_production) + `<details style="margin:10px 0"><summary class="small muted">Szacunek porównawczy z samych faktur (zaniżony)</summary>` + estSection(r.estimate) + `</details>`;
   if (r.exact) html += exactSection(r.exact);
   else if (r.exact_error) html += `<div class="banner">${esc(r.exact_error)}</div>`;
   html += `<div class="grid2" style="align-items:end;margin-top:8px"><label>Koszt instalacji (zł)<input type="number" id="pv_cost2" min="0" step="100" value="${state.settings.pv_cost || ''}"></label>
@@ -910,6 +924,12 @@ $('#b_file').onchange = async () => {
     const f = files[i];
     $('#b_msg').textContent = `Wczytuję ${i + 1} z ${files.length}…`;
     try {
+      if (/\.xlsx$/i.test(f.name)) {
+        const rx = await fetch('api/pv/production', {method: 'POST', headers: {'Content-Type': 'application/octet-stream'}, body: await f.arrayBuffer()});
+        if (!rx.ok) throw new Error(await rx.text());
+        csvMsg += `${csvMsg ? '\n' : ''}✔ Produkcja z falownika: wczytano ${(await rx.json()).saved} pozycji`;
+        continue;
+      }
       if (/\.csv$/i.test(f.name)) {
         const rc = await fetch('api/bills/csv', {method: 'POST', headers: {'Content-Type': 'text/csv'}, body: await f.arrayBuffer()});
         if (!rc.ok) throw new Error(await rc.text());
