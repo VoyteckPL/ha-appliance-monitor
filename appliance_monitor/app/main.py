@@ -161,7 +161,7 @@ class Monitor:
         self.settings.update(load_json(DATA / "settings.json", {}))
         self.programs = load_json(DATA / "programs.json", {})
         self.pending = load_json(DATA / "pending.json", [])
-        self.bills = load_json(DATA / "bills.json", {})
+        self.bills = self.migrate_bills(load_json(DATA / "bills.json", {}))
         self.bills_csv = load_json(DATA / "bills_csv.json", {})
         for c in cfgs:
             for k, v in CFG_DEFAULTS.items():  # urządzenia zapisane w starszych wersjach
@@ -480,8 +480,21 @@ class Monitor:
         for topic, payload in discovery.state_messages(a, now, self.extra(a, now)):
             self._pub(topic, payload)
 
+    @staticmethod
+    def migrate_bills(raw):
+        """Starszy zapis trzymał faktury po miesiącu; teraz po numerze faktury (duplikat nadpisuje samego siebie)."""
+        out = {}
+        for k, b in raw.items():
+            if re.fullmatch(r"\d{4}-\d{2}", k):
+                y, mo = int(k[:4]), int(k[5:])
+                b.setdefault("from", f"{y}-{mo:02d}-01")
+                nxt = (datetime(y + (mo == 12), mo % 12 + 1, 1) - timedelta(days=1)).date().isoformat()
+                b.setdefault("to", nxt)
+            out[b["number"]] = b
+        return out
+
     def publish_bills(self):
-        st = billslib.stats(list(self.bills.values()))
+        st = billslib.stats(billslib.by_month(self.bills.values()))
         if not st:
             return
         for topic, payload in discovery.bills_messages(st, self.settings["currency"]):
@@ -757,9 +770,9 @@ async def api_replay(request):
 
 async def api_bills_get(request):
     mon = request.app["mon"]
-    items = sorted(mon.bills.values(), key=lambda b: b["month"], reverse=True)
+    items = billslib.by_month(mon.bills.values())
     hist = sorted(mon.bills_csv.values(), key=lambda b: b["month"])
-    return web.json_response({"bills": items, "stats": billslib.stats(items), "history": hist})
+    return web.json_response({"bills": list(reversed(items)), "stats": billslib.stats(items), "history": hist})
 
 
 async def api_bills_csv(request):
@@ -793,10 +806,11 @@ async def api_bills_post(request):
         raise web.HTTPBadRequest(text=str(e))
     except (OSError, asyncio.TimeoutError):
         raise web.HTTPBadGateway(text="Nie udało się odczytać PDF-a (brak pdftotext?).")
-    mon.bills[bill["month"]] = bill
+    mon.bills[bill["number"]] = bill
     save_json(DATA / "bills.json", mon.bills)
     prices = False
-    if bill["month"] == max(mon.bills) and mon.settings.get("price_mode") == "pv":
+    newest = max(b["to"] for b in mon.bills.values())
+    if bill["to"] == newest and bill["export_price"] > 0 and mon.settings.get("price_mode") == "pv":
         mon.settings["import_price"], mon.settings["export_price"] = bill["import_price"], bill["export_price"]
         save_json(DATA / "settings.json", mon.settings)
         prices = True
@@ -806,8 +820,12 @@ async def api_bills_post(request):
 
 async def api_bills_delete(request):
     mon = request.app["mon"]
-    if mon.bills.pop(request.match_info["month"], None) is None:
+    month = request.match_info["month"]
+    gone = [n for n, b in mon.bills.items() if month in {r["month"] for r in billslib.by_month([b])}]
+    if not gone:
         raise web.HTTPNotFound()
+    for n in gone:
+        del mon.bills[n]
     save_json(DATA / "bills.json", mon.bills)
     return web.Response(status=204)
 

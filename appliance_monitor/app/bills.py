@@ -12,60 +12,64 @@ def _norm(text):
     return [re.sub(r"[ \t ]+", " ", ln).strip() for ln in text.splitlines() if ln.strip()]
 
 
+FEE_RE = re.compile(r"^(.+?) (\d\d\.\d\d\.\d{4}) (\d\d\.\d\d\.\d{4}) ([\d ]*[\d,.]+) (kWh|MC|MWh) ([\d,]+) ([\d ]*,\d\d) (\d+)$", re.M)
+
+
+def _date(d, m, y):
+    from datetime import date
+    return date(int(y), int(m), int(d))
+
+
 def parse_invoice(text):
-    """Zwraca słownik z danymi faktury albo rzuca ValueError z czytelnym powodem."""
+    """Zwraca słownik z danymi faktury Energa (każdy układ: z fotowoltaiką i bez) albo rzuca ValueError."""
+    from datetime import timedelta
     lines = _norm(text)
     joined = "\n".join(lines)
     m = re.search(r"Faktura (korygująca )?VAT (\S+)", joined)
     if not m:
         raise ValueError("To nie wygląda na fakturę Energa.")
     if m.group(1):
-        raise ValueError("To faktura korygująca; wgraj zwykłą fakturę rozliczeniową (FES).")
+        raise ValueError("To faktura korygująca (np. premia prądowa). Nie jest potrzebna: wartości bierzemy z faktur rozliczeniowych i CSV.")
     number = m.group(2)
     p = re.search(r"Rozliczenie za okres (\d\d)\.(\d\d)\.(\d{4}) - (\d\d)\.(\d\d)\.(\d{4})", joined)
     if not p:
         raise ValueError("Nie znalazłem okresu rozliczeniowego.")
-    month = f"{p.group(3)}-{p.group(2)}"
-    if (p.group(2), p.group(3)) != (p.group(5), p.group(6)):
-        raise ValueError("Obsługuję faktury za pojedynczy miesiąc.")
+    d0, d1 = _date(p.group(1), p.group(2), p.group(3)), _date(p.group(4), p.group(5), p.group(6))
+    end_eff = d1 - timedelta(days=1) if d1.day == 1 else d1
+    month = f"{end_eff.year}-{end_eff.month:02d}"
 
-    reads = [num(x) for x in re.findall(r"^G1\d \d+ \S+ .* (\d+,\d{3}) Z \d", joined, re.M)]
-    if len(reads) < 1:
-        raise ValueError("Nie znalazłem odczytów licznika.")
-    imp = reads[0]
+    energy_v = energy_q = excise_p = dist_v = fixed = 0.0
+    for r in FEE_RE.finditer(joined):
+        name, qty, unit, price, value = r.group(1), num(r.group(4)), r.group(5), num(r.group(6)), num(r.group(7))
+        if name.startswith("Energia czynna"):
+            if "akcyza" in name:
+                excise_p = price / 1000.0
+            else:
+                energy_v += value
+                energy_q += qty
+        elif name.startswith("Opłata"):
+            if unit == "MC":
+                fixed += value
+            else:
+                dist_v += value
+    if energy_q <= 0:
+        z = re.search(r"Zużycie energii elektrycznej: (\d+) kWh", joined)
+        if not z:
+            raise ValueError("Nie znalazłem pozycji „Energia czynna całodobowa”.")
+        energy_q = float(z.group(1))
+    billed = energy_q
+
+    reads = [num(x) for x in re.findall(r"^G1\d\S* \d+ \S+ .* (\d+(?:,\d+)?) [A-Z] \d+$", joined, re.M)]
+    imp = reads[0] if reads else billed
     exp = reads[1] if len(reads) > 1 else 0.0
 
-    def after(label):
-        r = re.search(label + r" \d\d\.\d\d\.\d{4} \d\d\.\d\d\.\d{4} ([\d ]+,?\d*) (kWh|MC|MWh) ([\d,]+) ([\d ]+,\d\d)", joined)
-        return r
-
-    billed = None
-    r = re.search(r"Energia czynna całodobowa \d\d\.\d\d\.\d{4} \d\d\.\d\d\.\d{4} (\d+) kWh ([\d,]+) ", joined)
-    if r:
-        billed, e_price = float(r.group(1)), num(r.group(2))
-    else:
-        r2 = re.search(r"Energia czynna całodobowa \d\d\.\d\d\.\d{4} \d\d\.\d\d\.\d{4} (\d+) kWh", joined)
-        raise ValueError("Nie znalazłem pozycji „Energia czynna całodobowa”." if not r2 else "Nie odczytałem ceny energii.")
-    if billed is not None and r:
-        e_price = num(r.group(2))
-
-    var_price = 0.0
-    for lab in ("Opłata sieciowa zmienna całodobowa", "Opłata jakościowa", "Opłata OZE", "Opłata kogeneracyjna"):
-        r = re.search(lab + r" \d\d\.\d\d\.\d{4} \d\d\.\d\d\.\d{4} \d+ kWh ([\d,]+) ", joined)
-        if not r:
-            raise ValueError(f"Nie znalazłem pozycji „{lab}”.")
-        var_price += num(r.group(1))
-    ex = re.search(r"akcyza \d\d\.\d\d\.\d{4} \d\d\.\d\d\.\d{4} [\d,]+ MWh ([\d,]+) ", joined)
-    excise = num(ex.group(1)) / 1000 if ex else 0.005
-
-    fixed = 0.0
-    for lab in ("Opłata handlowa", "Opłata abonamentowa", "Opłata sieciowa stała", "Opłata mocowa"):
-        r = re.search(lab + r" \d\d\.\d\d\.\d{4} \d\d\.\d\d\.\d{4} [\d,]+ MC ([\d,]+) ([\d,]+) 23", joined)
-        if r:
-            fixed += num(r.group(2))
-
-    d = re.search(r"Suma godzinowych sald ujemnych \d\d\.\d\d\.\d{4} \d\d\.\d\d\.\d{4} (\d+) kWh ([\d,]+) ([\d,]+) [\d.]+ ([\d,]+)", joined)
-    surplus, dep_price, dep_value = (float(d.group(1)), num(d.group(2)), num(d.group(4))) if d else (0.0, 0.0, 0.0)
+    d = re.search(r"^Suma godzinowych sald ujemnych \d\d\.\d\d\.\d{4} \d\d\.\d\d\.\d{4} (\d+) kWh ([\d, .]+)$", joined, re.M)
+    surplus = dep_value = dep_price = 0.0
+    if d:
+        surplus = float(d.group(1))
+        vals = d.group(2).split()
+        dep_value = num(vals[-1])
+        dep_price = num(vals[0]) if len(vals) > 1 else 0.0
 
     t = re.search(r"Rozliczenie energii elektrycznej i świadczenia usługi dystrybucji ([\d ]+,\d\d) ([\d ]+,\d\d) ([\d ]+,\d\d)", joined)
     if not t:
@@ -75,19 +79,58 @@ def parse_invoice(text):
     deposit_used = num(used.group(1)) if used else 0.0
     interest = re.search(r"odsetki za nieterminową wpłatę ([\d ]+,\d\d)", joined)
     interest = num(interest.group(1)) if interest else 0.0
-    to_pay = max(gross - deposit_used, 0.0) + interest
-
+    e_price = energy_v / energy_q if energy_q else 0.0
+    var_price = dist_v / billed if billed else 0.0
     return {
-        "number": number, "month": month,
+        "number": number, "from": d0.isoformat(), "to": d1.isoformat(), "month": month,
         "import_kwh": imp, "export_kwh": exp, "billed_kwh": billed, "surplus_kwh": surplus,
-        "energy_price_net": e_price, "dist_var_net": round(var_price, 4), "excise_net": excise,
+        "energy_price_net": round(e_price, 4), "dist_var_net": round(var_price, 4), "excise_net": excise_p,
         "fixed_net": round(fixed, 2), "deposit_price_net": dep_price,
         "deposit_value": dep_value, "deposit_used": deposit_used,
-        "net": net, "gross": gross, "interest": interest, "to_pay": round(to_pay, 2),
+        "net": net, "gross": gross, "interest": interest, "to_pay": round(max(gross - deposit_used, 0.0) + interest, 2),
         # ceny przeliczone na brutto — to z nich korzysta liczenie kosztu cykli
-        "import_price": round((e_price + var_price + excise) * VAT, 4),
-        "export_price": round(dep_price * VAT, 4),
+        "import_price": round((e_price + var_price + excise_p) * VAT, 4),
+        "export_price": round(dep_value / surplus, 4) if surplus > 0 and dep_value > 0 else 0.0,
     }
+
+
+ADDITIVE = ("import_kwh", "export_kwh", "billed_kwh", "surplus_kwh", "net", "gross", "fixed_net",
+            "deposit_value", "deposit_used", "interest", "to_pay")
+
+
+def by_month(bills):
+    """Faktury (po numerze) -> rekordy miesięczne. Faktura obejmująca kilka miesięcy (lub kilka faktur w
+    jednym miesiącu) jest rozdzielana/sumowana proporcjonalnie do dni."""
+    from datetime import date, timedelta
+    out = {}
+    for b in bills:
+        d0, d1 = date.fromisoformat(b["from"]), date.fromisoformat(b["to"])
+        end = d1 - timedelta(days=1) if d1.day == 1 else d1
+        days, d = [], d0
+        while d <= end:
+            days.append(f"{d.year}-{d.month:02d}")
+            d += timedelta(days=1)
+        if not days:
+            days = [b["month"]]
+        for mo in set(days):
+            f = days.count(mo) / len(days)
+            r = out.setdefault(mo, {"month": mo, **{k: 0.0 for k in ADDITIVE}, "_pw": 0.0, "_imp": 0.0, "_exp": 0.0, "numbers": []})
+            for k in ADDITIVE:
+                r[k] += b[k] * f
+            w = max(b["billed_kwh"] * f, 0.001)
+            r["_pw"] += w
+            r["_imp"] += b["import_price"] * w
+            r["_exp"] += b["export_price"] * w
+            r["numbers"].append(b["number"])
+    res = []
+    for r in out.values():
+        w = r.pop("_pw")
+        r["import_price"] = round(r.pop("_imp") / w, 4)
+        r["export_price"] = round(r.pop("_exp") / w, 4)
+        for k in ADDITIVE:
+            r[k] = round(r[k], 3)
+        res.append(r)
+    return sorted(res, key=lambda x: x["month"])
 
 
 def stats(bills):

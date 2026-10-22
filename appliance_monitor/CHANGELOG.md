@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.9.0
+- Odczyt faktur Energa w każdym układzie: sprzed fotowoltaiki (2019–2022), z premią prądową (2023), z depozytem w różnych wariantach (2024–2026). Sumy sprawdzone z zestawieniem CSV.
+- Faktury obejmujące kilka miesięcy rozdzielane na miesiące proporcjonalnie do dni; kilka faktur z jednego miesiąca sumuje się.
+- Faktury zapisywane po numerze: duplikat tej samej faktury nadpisuje się, nie podwaja.
+- Starsze lata bez paneli: podsumowanie pokazuje tylko to, co dotyczy danego okresu.
+- Historia wieloletnia opiera się na CSV (uwzględnia korekty), PDF-y uzupełniają szczegóły.
+- Wykresy z wieloma miesiącami: rzadsze etykiety osi.
+
 ## 0.8.1
 - Wgrywanie wielu faktur naraz: postęp („3 z 140”) i zwięzłe podsumowanie (ile wczytano, ile korekt pominięto, które pliki się nie odczytały).
 

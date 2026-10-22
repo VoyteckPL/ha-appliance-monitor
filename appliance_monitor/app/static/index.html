@@ -553,7 +553,8 @@ function chartFrame(labels, max, body) {
   const grid = [0, .5, 1].map(f => { const y = PT + ih * (1 - f);
     return `<line x1="${PL}" x2="${CW - 6}" y1="${y}" y2="${y}" stroke="var(--line)"/><text x="${PL - 5}" y="${y + 4}" text-anchor="end" fill="var(--muted)" font-size="10">${Math.round(max * f * 100) / 100}</text>`; }).join('');
   const slot = iw / labels.length;
-  const xl = labels.map((l, i) => `<text x="${PL + slot * (i + .5)}" y="${CH - 6}" text-anchor="middle" fill="var(--muted)" font-size="10">${esc(l)}</text>`).join('');
+  const every = Math.max(1, Math.ceil(30 / slot));  // przy gęstych wykresach pokazujemy co którąś etykietę
+  const xl = labels.map((l, i) => i % every ? '' : `<text x="${PL + slot * (i + .5)}" y="${CH - 6}" text-anchor="middle" fill="var(--muted)" font-size="10">${esc(l)}</text>`).join('');
   return `<svg viewBox="0 0 ${CW} ${CH}" style="width:100%;height:auto;display:block" role="img">${grid}${xl}${body(PL, PT, iw, ih, slot)}</svg>`;
 }
 const monthLabels = bs => { const multi = new Set(bs.map(b => b.month.slice(0, 4))).size > 1; return bs.map(b => MON[+b.month.slice(5) - 1] + (multi ? " '" + b.month.slice(2, 4) : '')); };
@@ -620,8 +621,9 @@ function chartsHtml(bs, all) {
 }
 const VATK = 1.23;
 function historyMonths() {
-  const m = new Map(histCsv.map(h => [h.month, {month: h.month, gross: h.gross, kwh: h.billed_kwh, src: 'csv'}]));
-  allBills.forEach(b => m.set(b.month, {month: b.month, gross: b.gross, kwh: b.billed_kwh, src: 'pdf'}));
+  // CSV ma kompletne sumy (uwzględnia korekty i wszystkie faktury miesiąca), PDF uzupełnia tylko miesiące bez CSV
+  const m = new Map(allBills.map(b => [b.month, {month: b.month, gross: b.gross, kwh: b.billed_kwh, src: 'pdf'}]));
+  histCsv.forEach(h => m.set(h.month, {month: h.month, gross: h.gross, kwh: h.billed_kwh, src: 'csv'}));
   return [...m.values()].sort((a, b) => a.month.localeCompare(b.month));
 }
 function histBars(ms, key, color, fmt) {
@@ -690,9 +692,9 @@ async function renderStats() {
   const pl = v => Math.round(v).toLocaleString('pl-PL');
   const box = (c, ico, html) => `<div style="display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border:1px solid var(--line);border-left:4px solid var(--${c});border-radius:10px;background:var(--bg);margin-bottom:8px"><span style="font-size:18px">${ico}</span><div>${html}</div></div>`;
   const sum = `${box('accent', '💳', `Za prąd płacisz średnio <b>${zl(st.avg_paid)} miesięcznie</b> (razem ${zl(st.total_paid)}). Tyle realnie wychodzi z Twojego konta.`)}
-    ${box('run', '✅', `<b>Na plus:</b> oddałeś do sieci <b>${pl(st.export_kwh)} kWh</b> i dostałeś za to <b>${zl(st.total_deposit)}</b>, które zmniejszyły rachunki (ok. ${zl(st.total_deposit / st.months)} miesięcznie).`)}
-    ${box('run', '✅', `<b>Na plus:</b> <b>${pl(st.netted_kwh)} kWh</b> pobranych z sieci nic Cię nie kosztowało, bo w tej samej godzinie oddałeś tyle samo (rozlicza się 1 do 1).`)}
-    ${box('done', '⚠️', `<b>Na minus:</b> za oddaną energię dostajesz tylko <b>${st.export_vs_buy}%</b> tego, co płacisz za prąd z sieci. Taka sama ilość kosztowałaby Cię przy zakupie ${zl(st.buy_value)}, a dostałeś ${zl(st.total_deposit)}. Dlatego opłaca się zużywać prąd od razu, gdy świeci słońce.`)}
+    ${st.export_kwh > 1 ? box('run', '✅', `<b>Na plus:</b> oddałeś do sieci <b>${pl(st.export_kwh)} kWh</b> i dostałeś za to <b>${zl(st.total_deposit)}</b>, które zmniejszyły rachunki (ok. ${zl(st.total_deposit / st.months)} miesięcznie).`) : ''}
+    ${st.export_kwh > 1 && st.netted_kwh > 1 ? box('run', '✅', `<b>Na plus:</b> <b>${pl(st.netted_kwh)} kWh</b> pobranych z sieci nic Cię nie kosztowało, bo w tej samej godzinie oddałeś tyle samo (rozlicza się 1 do 1).`) : ''}
+    ${st.export_kwh > 1 ? box('done', '⚠️', `<b>Na minus:</b> za oddaną energię dostajesz tylko <b>${st.export_vs_buy}%</b> tego, co płacisz za prąd z sieci. Taka sama ilość kosztowałaby Cię przy zakupie ${zl(st.buy_value)}, a dostałeś ${zl(st.total_deposit)}. Dlatego opłaca się zużywać prąd od razu, gdy świeci słońce.`) : ''}
     ${box('done', '⚠️', `<b>Na minus:</b> opłaty stałe to ok. <b>${zl(st.fixed_month)} miesięcznie</b> (${st.fixed_share}% rachunku). Płacisz je zawsze, nawet gdy prawie nic nie pobierasz.`)}
     <div class="hint">Aktualne ceny: zakup ${st.last.import_price.toFixed(3)} · oddana kWh ${st.last.export_price.toFixed(3)} ${esc(state.settings.currency)}.</div>`;
   const rowG = 'grid-template-columns:1.1fr 1fr 1fr 1fr 1.1fr 28px';
