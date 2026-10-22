@@ -629,6 +629,33 @@ function chartsHtml(bs, all) {
     `<div class="sec">Ceny za kWh (brutto)</div>${legend([['var(--danger)', 'zakup z sieci'], ['var(--run)', 'wartość oddanej kWh']])}` +
     lineChart(bs, [{n: 'zakup', c: 'var(--danger)', f: b => b.import_price, t: v => v.toFixed(3) + ' ' + C}, {n: 'oddana kWh', c: 'var(--run)', f: b => b.export_price, t: v => v.toFixed(3) + ' ' + C}]) + yoy);
 }
+function billsExtras(all) {
+  const asc = [...all].sort((a, b) => a.month.localeCompare(b.month)), C = state.settings.currency;
+  if (asc.length < 2) return '';
+  const f2 = v => v.toFixed(2).replace('.', ',') + ' ' + C;
+  // realny koszt jednej pobranej kWh (z opłatami stałymi)
+  const kc = asc.filter(b => b.import_kwh > 20).slice(-24).map(b => ({month: b.month, v: b.to_pay / b.import_kwh}));
+  let html = '';
+  if (kc.length > 1) html += `<div class="sec" style="margin-top:0">Ile naprawdę płacisz za pobraną kWh</div>${legend([['var(--accent)', 'do zapłaty ÷ pobrane kWh (z opłatami stałymi, po depozycie)']])}` +
+    lineChart(kc, [{n: 'za kWh', c: 'var(--accent)', f: b => b.v, t: v => v.toFixed(2) + ' ' + C}]) +
+    `<div class="hint">Gdy zużywasz mało, opłaty stałe rozkładają się na mało kWh i cena skacze w górę.</div>`;
+  // prognoza roczna
+  const last = asc[asc.length - 1], yr = last.month.slice(0, 4), done = asc.filter(b => b.month.startsWith(yr));
+  const prev = asc.filter(b => b.month.startsWith(String(+yr - 1)));
+  if (prev.length >= 6) {
+    const pm = Object.fromEntries(prev.map(b => [b.month.slice(5), b.to_pay])), have = new Set(done.map(b => b.month.slice(5)));
+    let fut = 0, n = 0;
+    for (let i = 1; i <= 12; i++) { const k = String(i).padStart(2, '0'); if (!have.has(k) && pm[k] != null) { fut += pm[k]; n++; } }
+    const paid = done.reduce((t, b) => t + b.to_pay, 0), prevTotal = prev.reduce((t, b) => t + b.to_pay, 0);
+    html += `<div class="sec">Prognoza rachunku na ${yr}</div>` + pvBox('accent', '📈',
+      `Do ${monthName(last.month)} zapłaciłeś <b>${f2(paid)}</b>. Jeśli pozostałe ${n} mies. będą jak rok temu, cały ${yr} wyniesie około <b>${f2(paid + fut)}</b> (rok ${+yr - 1}: ${f2(prevTotal)}).`);
+  }
+  // saldo depozytu z ostatnich 12 faktur
+  const l12 = asc.slice(-12), gen = l12.reduce((t, b) => t + b.deposit_value, 0), used = l12.reduce((t, b) => t + b.deposit_used, 0);
+  if (gen > 0) html += `<div class="sec">Depozyt z oddanej energii (ostatnie ${l12.length} mies.)</div>` + pvBox(gen - used > 0 ? 'done' : 'run', '🏦',
+    `Zebrałeś <b>${f2(gen)}</b>, wykorzystałeś <b>${f2(used)}</b>. ` + (gen - used > 1 ? `Różnica <b>${f2(gen - used)}</b> to depozyt, który czeka na wykorzystanie w kolejnych rachunkach (zimą). Dokładne saldo i termin ważności są na fakturze Energi.` : 'Cały depozyt został wykorzystany.'));
+  return statCard('Rachunki: cena kWh, prognoza, depozyt', html);
+}
 const VATK = 1.23;
 function monthInfo(m) {
   const b = allBills.find(x => x.month === m), h = histCsv.find(x => x.month === m);
@@ -745,6 +772,25 @@ function estSection(e) {
     <div class="grid2" style="align-items:end;margin-top:8px"><label>Początek instalacji (miesiąc)<input type="month" id="pv_start" value="${esc(t.start)}"></label>
       <div><button id="pv_start_save">Zapisz</button></div></div>`;
 }
+function pvExtras(ms) {
+  if (ms.length < 2) return '';
+  const pct = v => Math.round(v * 100) + '%', pl = v => Math.round(v).toLocaleString('pl-PL');
+  const sh = x => x.production > 0 ? x.self / x.production : 0;
+  const auto = x => (x.self + x.import) > 0 ? x.self / (x.self + x.import) : 0;
+  const T = ms.reduce((t, x) => ({p: t.p + x.production, s: t.s + x.self, i: t.i + x.import}), {p: 0, s: 0, i: 0});
+  const byB = [...ms].sort((a, b) => b.benefit - a.benefit), best = byB[0], worst = byB[byB.length - 1];
+  const prod = Object.fromEntries(ms.map(x => [x.month, x.production]));
+  const drops = ms.filter(x => prod[(+x.month.slice(0, 4) - 1) + x.month.slice(4)] > 50)
+    .map(x => ({m: x.month, v: x.production / prod[(+x.month.slice(0, 4) - 1) + x.month.slice(4)] - 1}))
+    .filter(d => d.v < -0.15).slice(-3);
+  const shareChart = lineChart(ms.map(x => ({month: x.month, a: sh(x) * 100, b: auto(x) * 100})),
+    [{n: 'zużycie własne', c: 'var(--run)', f: b => b.a, t: v => Math.round(v) + '%'}, {n: 'samowystarczalność', c: 'var(--accent)', f: b => b.b, t: v => Math.round(v) + '%'}]);
+  return `<div class="sec">Ile prądu z paneli zużywasz sam</div>
+    ${pvBox('run', '🏠', `<b>${pct(T.s / T.p)}</b> produkcji zużywasz u siebie (reszta idzie do sieci po niskiej cenie, więc im więcej, tym lepiej). Panele pokrywają <b>${pct(T.s / (T.s + T.i))}</b> Twojego zużycia.`)}
+    ${legend([['var(--run)', 'jaki % produkcji zużywasz sam'], ['var(--accent)', 'jaki % zużycia pokrywają panele']])}${shareChart}
+    ${pvBox('accent', '🏆', `Najlepszy miesiąc: <b>${monthName(best.month)}</b> (${zl(best.benefit)}, ${pl(best.production)} kWh). Najsłabszy: <b>${monthName(worst.month)}</b> (${zl(worst.benefit)}).`)}
+    ${drops.length ? pvBox('done', '⚠️', `Produkcja wyraźnie niższa niż rok wcześniej: ${drops.map(d => `<b>${monthName(d.m)}</b> (${Math.round(d.v * 100)}%)`).join(', ')}. Jeśli to nie pogoda, sprawdź zacienienie lub zabrudzenie paneli.`) : ''}`;
+}
 function exactSection(r) {
   const t = r.total, ms = r.months;
   if (!ms.length) return `<div class="banner">Są statystyki produkcji z HA, ale nie pokrywają się z miesiącami z fakturami PDF.</div>`;
@@ -759,6 +805,7 @@ function exactSection(r) {
     <div id="st_pvex">
     <div class="sec">Zysk w każdym miesiącu</div>${legend([['var(--run)', 'oszczędność na własnym zużyciu'], ['var(--accent)', 'depozyt za oddaną energię']])}
     ${barChart(ms.map(x => ({month: x.month, a: x.avoided, d: x.deposit})), [{n: 'oszczędność', c: 'var(--run)', f: b => b.a, t: v => zl(v)}, {n: 'depozyt', c: 'var(--accent)', f: b => b.d, t: v => zl(v)}], true)}</div>
+    ${pvExtras(ms)}
     <div class="hint">Zysk = (produkcja − oddane) × cena zakupu + depozyt. Produkcja z eksportu falownika${r.first_data ? ' (od ' + monthName(r.first_data) + ')' : ''} i HA.</div></details>`;
 }
 async function pvCard() {
@@ -866,10 +913,38 @@ async function deviceStats(fromTs) {
     try {
       const h = (await api(`api/appliances/${a.id}/history`)).entries.filter(e => e.start >= fromTs);
       const cost = h.reduce((t, e) => t + (e.cost != null ? e.cost : e.energy_wh / 1000 * state.settings.price_per_kwh), 0);
-      rows.push({name: a.name, n: h.length, wh: h.reduce((t, e) => t + e.energy_wh, 0), cost});
+      rows.push({name: a.name, n: h.length, wh: h.reduce((t, e) => t + e.energy_wh, 0), cost, entries: h});
     } catch (e) { /* pomijamy urządzenie bez historii */ }
   }
   return rows;
+}
+function deviceExtras(rows) {
+  const S = state.settings, C = S.currency, f1 = v => v.toFixed(1).replace('.', ',') + ' kWh';
+  let tbl = '', tips = '';
+  const g = 'grid-template-columns:1.3fr .7fr 1fr 1fr';
+  for (const x of rows) {
+    const pc = x.entries.filter(e => e.pv_kwh != null || e.grid_kwh != null);
+    if (!pc.length) continue;
+    const pv = pc.reduce((t, e) => t + (e.pv_kwh || 0), 0), gr = pc.reduce((t, e) => t + (e.grid_kwh || 0), 0);
+    const save = gr * Math.max((S.import_price || 0) - (S.export_price || 0), 0);
+    tbl += `<div class="crow" style="${g}"><b>${esc(x.name)}</b><span>${pc.length}</span><span>${pv + gr > 0 ? Math.round(pv / (pv + gr) * 100) : 0}%</span><span>${f1(gr)} <span class="muted small">(${zl(save)})</span></span></div>`;
+  }
+  if (tbl) tips += `<div class="sec" style="margin-top:0">Z paneli czy z sieci</div><div class="cycles" style="max-height:none"><div class="crow h muted small" style="${g}"><span>Urządzenie</span><span>Cykle</span><span>Z paneli</span><span>Z sieci (do zyskania)</span></div>${tbl}</div>
+    <div class="hint">„Do zyskania” to maksymalna oszczędność, gdyby cała energia pobrana z sieci poszła ze słońca (cena zakupu − wartość oddanej kWh). Liczone tylko dla cykli z trybu „Z fotowoltaiką”.</div>`;
+  // trend: średnia energia cyklu tego samego programu, ostatnie 3 vs pierwsze 3 (min. 6 cykli)
+  const warn = [];
+  for (const x of rows) {
+    const byP = {};
+    x.entries.forEach(e => { if (e.program) (byP[e.program] = byP[e.program] || []).push(e); });
+    for (const [p, es] of Object.entries(byP)) {
+      if (es.length < 6) continue;
+      const s = [...es].sort((a, b) => a.start - b.start), avg = a => a.reduce((t, e) => t + e.energy_wh, 0) / a.length;
+      const a0 = avg(s.slice(0, 3)), a1 = avg(s.slice(-3));
+      if (a0 > 50 && Math.abs(a1 / a0 - 1) > 0.15) warn.push(`<b>${esc(x.name)}</b>, ${esc(p)}: ${(a0 / 1000).toFixed(2).replace('.', ',')} → ${(a1 / 1000).toFixed(2).replace('.', ',')} kWh na cykl (${a1 > a0 ? '+' : ''}${Math.round((a1 / a0 - 1) * 100)}%)`);
+    }
+  }
+  if (warn.length) tips += `<div class="sec">Zmiana zużycia w tym samym programie</div>` + pvBox('done', '🔧', warn.slice(0, 6).join('<br>') + '<br><span class="small muted">Wzrost może znaczyć kamień, zużyty grzałkowy element lub inne ustawienia; spadek: oszczędniejszy program.</span>');
+  return tips ? statCard('Urządzenia: panele, sieć i trendy', tips) : '';
 }
 async function renderStats() {
   const r = await api('api/bills');
@@ -892,7 +967,7 @@ async function renderStats() {
     [...bs].reverse().map(b => `<div class="crow" style="${rowG}"><span>${monthName(b.month)}</span><span>${Math.round(b.import_kwh)} kWh</span><span>${Math.round(b.export_kwh)} kWh</span><span>${zl(b.deposit_used)}</span><b>${zl(b.to_pay)}</b><button class="x" data-bd="${esc(b.month)}" title="Usuń fakturę" aria-label="Usuń fakturę">✕</button></div>`).join('') + '</div>';
   const years = new Set(allBills.map(b => b.month.slice(0, 4)));
   $('#st_body').innerHTML = statCard(`W skrócie (${st.months} mies.: ${monthName(st.from)} – ${monthName(st.to)})`, sum)
-    + `<div id="st_pv"></div>` + chartsHtml(bs, allBills) + `<div id="st_dev"></div>` + historyCard()
+    + `<div id="st_pv"></div>` + chartsHtml(bs, allBills) + `<div id="st_dev"></div>` + billsExtras(allBills) + historyCard()
     + statCard('Faktury w wybranym okresie', table) + (years.size > 1 ? statCard('Podsumowanie roczne', yearTable(allBills)) : '');
   document.querySelectorAll('[data-bd]').forEach(b => b.onclick = async () => {
     if (!confirm('Usunąć fakturę z ' + monthName(b.dataset.bd) + '?')) return;
@@ -902,11 +977,12 @@ async function renderStats() {
   pvCard().then(h => { const el = $('#st_pv'); if (el) { el.innerHTML = h; pvWire(); if (state.selMonth) markSel(state.selMonth); } });
   const rows = await deviceStats(new Date(st.from + '-01T00:00:00').getTime() / 1000);
   if (rows.some(x => x.n) && $('#st_dev')) {
+    const extra = deviceExtras(rows);
     const g = 'grid-template-columns:1.4fr .7fr 1fr 1fr';
     $('#st_dev').innerHTML = statCard('Ile kosztują Twoje urządzenia w tym okresie',
       `<div class="cycles" style="max-height:none"><div class="crow h muted small" style="${g}"><span>Urządzenie</span><span>Cykle</span><span>Energia</span><span>Koszt</span></div>` +
       rows.map(x => `<div class="crow" style="${g}"><b>${esc(x.name)}</b><span>${x.n}</span><span>${(x.wh / 1000).toFixed(1)} kWh</span><b>${zl(x.cost)}</b></div>`).join('') + '</div>' +
-      `<div class="hint">Z historii cykli. Tryb „Z fotowoltaiką” liczy koszt godzina po godzinie, więc cykle w słońcu wychodzą taniej.</div>`);
+      `<div class="hint">Z historii cykli. Tryb „Z fotowoltaiką” liczy koszt godzina po godzinie, więc cykle w słońcu wychodzą taniej.</div>`) + extra;
   }
 }
 $('#st_period').onchange = () => { state.statsPeriod = $('#st_period').value; try { localStorage.setItem('am_period', state.statsPeriod); } catch (e) { /* bez zapamiętania */ } renderStats(); };

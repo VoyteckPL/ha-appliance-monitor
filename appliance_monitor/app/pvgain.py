@@ -130,7 +130,7 @@ def compute(prod, months, cost=0.0):
         avoided, dep = S * p, b["deposit_value"]
         out.append({"month": mo, "production": round(P, 1), "export": round(E, 1), "self": round(S, 1),
                     "price": round(p, 4), "avoided": round(avoided, 2), "deposit": round(dep, 2),
-                    "benefit": round(avoided + dep, 2), "estimated": est})
+                    "import": round(b.get("import_kwh") or 0.0, 1), "benefit": round(avoided + dep, 2), "estimated": est})
     cum = 0.0
     for r in out:
         cum += r["benefit"]

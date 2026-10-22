@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.14.0
+- Rachunki: realny koszt pobranej kWh (z opłatami stałymi), prognoza rachunku na bieżący rok (na podstawie poprzedniego), szacunek salda depozytu z ostatnich 12 miesięcy.
+- Fotowoltaika: jaki procent produkcji zużywasz sam i jaki procent zużycia pokrywają panele (wykres miesięczny), najlepszy i najsłabszy miesiąc, ostrzeżenie o produkcji niższej o ponad 15% niż rok wcześniej.
+- Urządzenia: udział energii z paneli i z sieci na urządzenie z kwotą możliwą do zyskania po przesunięciu na słońce, wykrywanie wzrostu lub spadku zużycia tego samego programu.
+
 ## 0.13.2
 - Karta fotowoltaiki w skrócie: zysk i zwrot na wierzchu, wykresy i szczegóły w rozwijanym „Ile zarobiłeś”.
 
