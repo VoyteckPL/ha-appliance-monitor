@@ -212,6 +212,24 @@ def test_programs_and_anomaly():
     assert pg.program_of(long_, named) == "Intensywny" and pg.program_of({"duration_s": 100, "energy_wh": 5}, named) is None
 
 
+def test_pv_cost():
+    import pricing
+    H = 3600
+    t0 = 10 * H  # cykl 10:00-12:00, 1 kWh na godzinę (2 kWh razem)
+    e = {"start": t0, "end": t0 + 2 * H, "energy_wh": 2000, "curve": {"t0": t0, "step": H, "w": [1000, 1000]}}
+    def meter(rows):  # skumulowane liczniki z wartością na granicach godzin
+        return [(t0 - H + i * H, v) for i, v in enumerate(rows)]
+    # godz. 10: dom oddał 3 kWh netto mimo pralki -> cała z PV; godz. 11: pobór 2 kWh -> pralka z sieci
+    imp = meter([100, 100, 102, 102])
+    exp = meter([50, 53, 53, 53])
+    cost, grid, pv = pricing.cycle_cost(e, imp, exp, 1.24, 0.30, 99 * H)
+    assert abs(grid - 1.0) < 1e-9 and abs(pv - 1.0) < 1e-9 and abs(cost - 1.54) < 1e-9
+    # saldo godzinne częściowe: pobór 0.4 kWh, pralka 1 kWh -> 0.4 z sieci, 0.6 z PV
+    cost, grid, pv = pricing.cycle_cost(e, meter([0, 0, 0.4, 0.4]), meter([0, 0, 0, 0]), 1.0, 0.0, 99 * H)
+    assert abs(grid - 0.4) < 1e-9 and abs(pv - 1.6) < 1e-9
+    assert pricing.cycle_cost(e, [], [], 1, 1, 99 * H) is None
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

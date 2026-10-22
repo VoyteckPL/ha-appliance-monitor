@@ -15,6 +15,7 @@ import paho.mqtt.client as mqtt
 from aiohttp import ClientSession, ClientTimeout, WSMsgType, web
 
 import discovery
+import pricing
 import programs
 from engine import (CFG_DEFAULTS, DEFAULT_MSG_FINISH, DEFAULT_MSG_REMIND, DEFAULT_MSG_START,
                     PRESETS, RUNNING, Appliance, entry_from_info, plural_cykl, render)
@@ -38,6 +39,8 @@ ACTION_PREFIX = "AM_UNLOADED_"
 TIME_RE = re.compile(r"([01]\d|2[0-3]):[0-5]\d")
 DEFAULT_SETTINGS = {
     "price_per_kwh": 1.0, "currency": "zł",
+    "price_mode": "flat", "import_price": 1.24, "export_price": 0.30,
+    "grid_import_entity": "", "grid_export_entity": "",
     "quiet_enabled": True, "quiet_from": "22:00", "quiet_to": "07:00",
     "weekly_enabled": False, "weekly_day": 6, "weekly_time": "18:00", "weekly_targets": [],
 }
@@ -208,6 +211,40 @@ class Monitor:
             out.append((now.timestamp(), out[-1][1]))
         return out
 
+    async def load_series(self, entity, start_ts, end_ts):
+        """Czujnik skumulowany z rejestratora jako [(t, kWh)], z wartością tuż przed start_ts."""
+        start = datetime.fromtimestamp(start_ts - 2 * 3600, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        end = datetime.fromtimestamp(end_ts + 60, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        cur = await self.ha_get(f"/states/{entity}")
+        k = 0.001 if cur.get("attributes", {}).get("unit_of_measurement") == "Wh" else 1.0
+        data = await self.ha_get(
+            f"/history/period/{start}?filter_entity_id={entity}&end_time={end}&minimal_response&no_attributes", timeout=60)
+        out = []
+        for row in (data[0] if data else []):
+            try:
+                out.append((datetime.fromisoformat(row.get("last_changed") or row["last_updated"]).timestamp(),
+                            float(row["state"]) * k))
+            except (KeyError, ValueError, TypeError):
+                continue
+        out.sort()
+        return out
+
+    async def pv_cost(self, entry):
+        """Koszt cyklu wg salda godzinowego licznika; None, gdy tryb prosty lub brak danych."""
+        S = self.settings
+        if S.get("price_mode") != "pv" or not S.get("grid_import_entity") or not S.get("grid_export_entity"):
+            return None
+        try:
+            imp = await self.load_series(S["grid_import_entity"], entry["start"], entry["end"])
+            exp = await self.load_series(S["grid_export_entity"], entry["start"], entry["end"])
+        except Exception as e:
+            log.warning("Koszt PV: brak danych licznika: %s", e)
+            return None
+        r = pricing.cycle_cost(entry, imp, exp, S["import_price"], S["export_price"], time.time())
+        if r is None:
+            return None
+        return {"cost": round(r[0], 3), "grid_kwh": round(r[1], 3), "pv_kwh": round(r[2], 3)}
+
     async def ha_post(self, path, data):
         async with self.session.post(f"{HA_BASE}{path}", headers=self.hdr(), json=data) as r:
             if r.status >= 400:
@@ -257,7 +294,14 @@ class Monitor:
             return False
         return a <= cur < b if a < b else (cur >= a or cur < b)
 
-    def money(self, wh):
+    def money_of(self, entries):
+        """Suma kosztu wpisów: policzony z salda PV, a gdy go brak, wg ceny stałej."""
+        p, cur = self.settings["price_per_kwh"], self.settings["currency"]
+        return f"{sum(e['cost'] if e.get('cost') is not None else e['energy_wh'] / 1000 * p for e in entries):.2f} {cur}"
+
+    def money(self, wh, entry=None):
+        if entry and entry.get("cost") is not None:  # koszt policzony z salda godzinowego (PV)
+            return f"{entry['cost']:.2f} {self.settings['currency']}"
         return f"{wh / 1000 * self.settings['price_per_kwh']:.2f} {self.settings['currency']}"
 
     # -- powiadomienia
@@ -276,7 +320,7 @@ class Monitor:
         c = a.cfg
         info = dict(info)
         if info.get("energy_wh") is not None:
-            info["cost"] = self.money(info["energy_wh"])
+            info["cost"] = self.money(info["energy_wh"], info.get("entry"))
         lines = []
         if kind == "start":
             if c["notify_start"]:
@@ -313,17 +357,18 @@ class Monitor:
             await self.send([t], "Powiadomienia z nocy", "\n".join(lines))
 
     def weekly_text(self, now):
-        lines, total_n, total_wh = [], 0, 0.0
+        lines, total_n, total_wh, all_es = [], 0, 0.0, []
         for a in self.appliances.values():
             es = [h for h in self.history.get(a.cfg["id"], []) if h["start"] >= now - 7 * 86400]
             if es:
                 wh = sum(h["energy_wh"] for h in es)
                 total_n += len(es)
                 total_wh += wh
-                lines.append(f"{a.cfg['name']}: {len(es)} {plural_cykl(len(es))}, {wh / 1000:.2f} kWh, {self.money(wh)}")
+                all_es += es
+                lines.append(f"{a.cfg['name']}: {len(es)} {plural_cykl(len(es))}, {wh / 1000:.2f} kWh, {self.money_of(es)}")
         if not lines:
             return "W ostatnich 7 dniach nie było żadnych cykli."
-        lines.append(f"Razem: {total_n} {plural_cykl(total_n)}, {total_wh / 1000:.2f} kWh, {self.money(total_wh)}")
+        lines.append(f"Razem: {total_n} {plural_cykl(total_n)}, {total_wh / 1000:.2f} kWh, {self.money_of(all_es)}")
         return "\n".join(lines)
 
     async def maybe_weekly(self, now):
@@ -411,7 +456,8 @@ class Monitor:
         ex = {"today_cycles": len(today), "week_cycles": len([h for h in hist if h["start"] >= now - 7 * 86400]),
               "today_energy": f"{sum(h['energy_wh'] for h in today) / 1000:.3f}"}
         if hist:
-            ex["cost"] = f"{hist[-1]['energy_wh'] / 1000 * self.settings['price_per_kwh']:.2f}"
+            c = hist[-1].get("cost")
+            ex["cost"] = f"{c if c is not None else hist[-1]['energy_wh'] / 1000 * self.settings['price_per_kwh']:.2f}"
             ex["program"] = programs.program_of(hist[-1], self.named_programs(cid)) or "nieznany"
         typ = self.typical(cid)
         if a.state == RUNNING and a.cycle_start is not None and typ:
@@ -472,13 +518,16 @@ class Monitor:
                     cid = a.cfg["id"]
                     h = self.history.setdefault(cid, [])
                     entry = entry_from_info(info)
+                    pc = await self.pv_cost(entry)
+                    if pc:
+                        entry.update(pc)
                     anomaly = programs.anomaly(entry, h)  # porównanie z poprzednimi cyklami, bez bieżącego
                     if anomaly:
                         entry["anomaly"] = anomaly
                     h.append(entry)
                     del h[:-HISTORY_MAX]
                     self.save_history()
-                    info = {**info, "anomaly": anomaly,
+                    info = {**info, "entry": entry, "anomaly": anomaly,
                             "program": programs.program_of(entry, self.named_programs(cid))}
                 if kind in ("start", "finish", "remind"):
                     asyncio.create_task(self.notify(a, kind, info))
@@ -663,6 +712,9 @@ async def api_backfill(request):
     for e in found:
         same = next((x for x in h if abs(x["start"] - e["start"]) < 300), None)
         if same is None:
+            pc = await mon.pv_cost(e)
+            if pc:
+                e.update(pc)
             h.append(e)
             added += 1
         elif not same.get("curve"):
@@ -715,8 +767,25 @@ async def api_settings_put(request):
     except (TypeError, ValueError):
         wday = 6
     targets = [t for t in body.get("weekly_targets", []) if isinstance(t, str) and re.fullmatch(r"[a-z0-9_]+", t)]
+    def num(key, default):
+        try:
+            return round(min(max(float(body.get(key, default)), 0.0), 100.0), 4)
+        except (TypeError, ValueError):
+            raise web.HTTPBadRequest(text="Ceny muszą być liczbami.")
+
+    def ent(key):
+        v = str(body.get(key) or "")
+        if v and not re.fullmatch(r"sensor\.[a-z0-9_]+", v):
+            raise web.HTTPBadRequest(text="Niepoprawna encja licznika.")
+        return v
+
+    mode = "pv" if body.get("price_mode") == "pv" else "flat"
+    if mode == "pv" and not (ent("grid_import_entity") and ent("grid_export_entity")):
+        raise web.HTTPBadRequest(text="Wybierz oba liczniki: pobór i oddawanie energii.")
     new = {
         "price_per_kwh": round(price, 4), "currency": cur,
+        "price_mode": mode, "import_price": num("import_price", 1.24), "export_price": num("export_price", 0.3),
+        "grid_import_entity": ent("grid_import_entity"), "grid_export_entity": ent("grid_export_entity"),
         "quiet_enabled": bool(body.get("quiet_enabled", True)),
         "quiet_from": hhmm("quiet_from", "22:00"), "quiet_to": hhmm("quiet_to", "07:00"),
         "weekly_enabled": bool(body.get("weekly_enabled", False)), "weekly_day": wday,
@@ -748,6 +817,11 @@ async def api_options(request):
             sensors.append({"entity_id": eid, "name": at.get("friendly_name", eid),
                             "state": s["state"], "unit": unit or ""})
     sensors.sort(key=lambda x: x["name"].lower())
+    energy = [{"entity_id": s["entity_id"], "name": s.get("attributes", {}).get("friendly_name", s["entity_id"]),
+               "state": s["state"]} for s in states
+              if s["entity_id"].startswith("sensor.")
+              and s.get("attributes", {}).get("device_class") == "energy"]
+    energy.sort(key=lambda x: x["name"].lower())
     notify = []
     for d in services:
         if d.get("domain") == "notify":
@@ -758,7 +832,7 @@ async def api_options(request):
                 notify.append({"service": svc, "label": label})
     notify.sort(key=lambda x: (not x["service"].startswith("mobile_app_"), x["label"].lower()))
     return web.json_response({
-        "sensors": sensors, "notify": notify, "presets": PRESETS,
+        "sensors": sensors, "energy": energy, "notify": notify, "presets": PRESETS,
         "default_msg_start": DEFAULT_MSG_START, "default_msg_finish": DEFAULT_MSG_FINISH,
         "default_msg_remind": DEFAULT_MSG_REMIND,
     })

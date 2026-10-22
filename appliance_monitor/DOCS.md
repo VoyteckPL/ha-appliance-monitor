@@ -26,3 +26,7 @@ Na liście celów pojawiają się usługi `notify.*`, w tym telefony z aplikacj�
 - **Wczytaj historię z HA** pobiera dane z rejestratora HA (domyślnie przechowuje ok. 10 dni)
   i wykrywa cykle przy aktualnych ustawieniach urządzenia. Powtórne wczytanie nie dubluje cykli.
 - Fałszywy cykl usuniesz przyciskiem ✕ na liście.
+
+
+## Koszt z fotowoltaiką
+W ⚙ wybierz „Z fotowoltaiką”, wskaż dwie encje licznika (energia pobrana i oddana, w kWh) i wpisz: cenę zakupu z sieci (brutto, energia + akcyza + część zmienna dystrybucji) oraz wartość oddanej kWh (cena z depozytu z faktury × 1,23). Wartość oddanej energii zmienia się co miesiąc, więc aktualizuj ją po fakturze; koszt zapisuje się przy zakończeniu cyklu i starsze cykle się nie zmieniają.

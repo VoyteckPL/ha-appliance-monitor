@@ -226,11 +226,21 @@
 <dialog id="sdlg">
   <form method="dialog">
     <b>Ustawienia ogólne</b>
-    <div class="grid2">
-      <label>Cena prądu za kWh<input type="number" id="s_price" step="0.01" min="0"></label>
-      <label>Waluta<input type="text" id="s_cur" maxlength="8"></label>
-    </div>
-    <div class="hint">Stała cena do wyliczania kosztu cykli w widoku Szczegóły.</div>
+    <fieldset>
+      <legend>Cena prądu</legend>
+      <label>Sposób liczenia kosztu<select id="s_mode"><option value="flat">Stała cena za kWh</option><option value="pv">Z fotowoltaiką (net-billing, saldo godzinowe)</option></select></label>
+      <div class="grid2"><label id="s_pricewrap">Cena za kWh<input type="number" id="s_price" step="0.01" min="0"></label>
+        <label>Waluta<input type="text" id="s_cur" maxlength="8"></label></div>
+      <div id="s_pv">
+        <div class="grid2">
+          <label>Cena zakupu z sieci (brutto, zł/kWh)<input type="number" id="s_imp" step="0.001" min="0"></label>
+          <label>Wartość oddanej kWh (brutto, zł)<input type="number" id="s_exp" step="0.001" min="0"></label>
+        </div>
+        <label>Licznik: energia pobrana z sieci<select id="s_eimp"></select></label>
+        <label>Licznik: energia oddana do sieci<select id="s_eexp"></select></label>
+        <div class="hint">Zakup: energia + akcyza + część zmienna dystrybucji, razem z VAT (u Ciebie ok. 1,24). Wartość oddanej energii to cena z depozytu × 1,23 z faktury; zmienia się co miesiąc, więc aktualizuj ją po każdej fakturze. Koszt cyklu liczy się godzina po godzinie: energia pokryta nadwyżką z paneli kosztuje tyle, ile utraciłeś na jej nieoddaniu, reszta pełną cenę z sieci.</div>
+      </div>
+    </fieldset>
     <fieldset>
       <legend>Cisza nocna</legend>
       <label class="chk"><input type="checkbox" id="s_quiet"> Wstrzymuj powiadomienia w nocy</label>
@@ -282,6 +292,7 @@ const fmtAgo = ts => fmtDur(Date.now()/1000 - ts) + ' temu';
 const fmtTime = ts => new Date(ts*1000).toLocaleString('pl-PL', {day:'numeric', month:'short', hour:'2-digit', minute:'2-digit'});
 const clock = ts => new Date(ts*1000).toLocaleTimeString('pl-PL', {hour:'2-digit', minute:'2-digit'});
 const kwh = wh => (wh/1000).toFixed(2);
+const moneyE = e => (e.cost != null ? e.cost.toFixed(2) : (e.energy_wh/1000 * state.settings.price_per_kwh).toFixed(2)) + ' ' + state.settings.currency;
 const money = wh => (wh/1000 * state.settings.price_per_kwh).toFixed(2) + ' ' + state.settings.currency;
 function niceMax(v) { const p = Math.pow(10, Math.floor(Math.log10(v))); for (const m of [1,2,2.5,5,10]) if (m*p >= v) return m*p; return v; }
 
@@ -382,10 +393,10 @@ function renderDetails() {
     html += `<div class="tiles">
       <div class="tile"><span class="muted small">Cykle (30 dni)</span><b>${win.length}</b></div>
       <div class="tile"><span class="muted small">Energia</span><b>${kwh(wh)} kWh</b></div>
-      <div class="tile"><span class="muted small">Koszt</span><b>${money(wh)}</b></div>
+      <div class="tile"><span class="muted small">Koszt</span><b>${(win.reduce((t, e) => t + (e.cost != null ? e.cost : e.energy_wh/1000 * S.price_per_kwh), 0)).toFixed(2)} ${esc(S.currency)}</b></div>
       <div class="tile"><span class="muted small">Średni czas</span><b>${win.length ? fmtDur(avgD) : '—'}</b></div>
       <div class="tile"><span class="muted small">Średnio na cykl</span><b>${win.length ? kwh(wh / win.length) + ' kWh' : '—'}</b></div></div>
-      <div class="hint">Koszt wg ceny ${esc(S.price_per_kwh)} ${esc(S.currency)}/kWh. Zmienisz ją w ⚙ na górze strony.</div>
+      <div class="hint">${S.price_mode === 'pv' ? 'Koszt z uwzględnieniem fotowoltaiki (saldo godzinowe licznika); najedź na koszt cyklu, żeby zobaczyć podział sieć/PV.' : 'Koszt wg stałej ceny ' + esc(S.price_per_kwh) + ' ' + esc(S.currency) + '/kWh.'} Ceny zmienisz w ⚙ na górze strony.</div>
       <div><div class="sec">Energia dziennie (14 dni)</div>${dayBars(E)}</div>
       ${programsSection()}
       <div><div class="sec">Wykres mocy cyklu</div><div id="d_chart"></div></div>
@@ -435,7 +446,7 @@ function dayBars(E) {
 
 function cycleList(E) {
   return `<div class="cycles"><div class="crow h muted small"><span>Start</span><span class="pg">Program</span><span>Czas</span><span>kWh</span><span>Koszt</span><span></span></div>` +
-    E.map(e => `<div class="crow ${e.start === det.sel ? 'sel' : ''}" data-s="${e.start}"><span>${e.anomaly ? `<span title="${esc(e.anomaly)}">⚠ </span>` : ''}${fmtTime(e.start)}</span><span class="pg muted">${esc(e.program || '')}</span><span>${fmtDur(e.duration_s)}</span><span>${kwh(e.energy_wh)}</span><span>${money(e.energy_wh)}</span><button class="x" data-del="${e.start}" title="Usuń z historii" aria-label="Usuń z historii">✕</button></div>`).join('') + '</div>';
+    E.map(e => `<div class="crow ${e.start === det.sel ? 'sel' : ''}" data-s="${e.start}"><span>${e.anomaly ? `<span title="${esc(e.anomaly)}">⚠ </span>` : ''}${fmtTime(e.start)}</span><span class="pg muted">${esc(e.program || '')}</span><span>${fmtDur(e.duration_s)}</span><span>${kwh(e.energy_wh)}</span><span title="${e.cost != null ? 'z sieci ' + e.grid_kwh + ' kWh, z PV ' + e.pv_kwh + ' kWh' : ''}">${moneyE(e)}</span><button class="x" data-del="${e.start}" title="Usuń z historii" aria-label="Usuń z historii">✕</button></div>`).join('') + '</div>';
 }
 
 function bindList() {
@@ -459,7 +470,7 @@ function drawChart() {
   const prev = e.program ? det.entries.find(x => x.program === e.program && x.start < e.start) : null;  // wpisy są od najnowszych
   const sg = v => (v >= 0 ? '+' : '−');
   const cmp = prev ? `<div class="small muted">W porównaniu z poprzednim „${esc(e.program)}”: ${sg(e.energy_wh - prev.energy_wh)}${(Math.abs(e.energy_wh - prev.energy_wh) / 1000).toFixed(2)} kWh, ${sg(e.duration_s - prev.duration_s)}${fmtDur(Math.abs(e.duration_s - prev.duration_s))}</div>` : '';
-  const head = `<div class="cyc-head"><b>${fmtTime(e.start)}</b>${e.program ? `<span class="badge">${esc(e.program)}</span>` : ''}<span>${fmtDur(e.duration_s)}</span><span>${kwh(e.energy_wh)} kWh</span><span>${money(e.energy_wh)}</span>
+  const head = `<div class="cyc-head"><b>${fmtTime(e.start)}</b>${e.program ? `<span class="badge">${esc(e.program)}</span>` : ''}<span>${fmtDur(e.duration_s)}</span><span>${kwh(e.energy_wh)} kWh</span><span>${moneyE(e)}</span>
     <span class="muted">${e.peak_w ? 'szczyt ' + e.peak_w + ' W' : ''}</span><span id="c_hover" class="muted small"></span></div>`
     + (e.anomaly ? `<div class="small" style="color:var(--done);margin-bottom:4px">⚠ ${esc(e.anomaly)}</div>` : '') + cmp;
   const c = e.curve;
@@ -517,9 +528,12 @@ window.addEventListener('resize', () => { if ($('#det').open && det.entries.leng
 
 // ---------- ustawienia ogólne ----------
 $('#s_wday').innerHTML = ['Poniedziałek','Wtorek','Środa','Czwartek','Piątek','Sobota','Niedziela'].map((d, i) => `<option value="${i}">${d}</option>`).join('');
+const showMode = () => { const pv = $('#s_mode').value === 'pv'; $('#s_pv').hidden = !pv; $('#s_pricewrap').hidden = pv; };
+$('#s_mode').onchange = showMode;
 $('#gear').onclick = async () => {
   const S = state.settings;
   $('#s_price').value = S.price_per_kwh; $('#s_cur').value = S.currency;
+  $('#s_mode').value = S.price_mode || 'flat'; $('#s_imp').value = S.import_price ?? 1.24; $('#s_exp').value = S.export_price ?? 0.3;
   $('#s_quiet').checked = S.quiet_enabled !== false; $('#s_qfrom').value = S.quiet_from || '22:00'; $('#s_qto').value = S.quiet_to || '07:00';
   $('#s_weekly').checked = !!S.weekly_enabled; $('#s_wday').value = S.weekly_day ?? 6; $('#s_wtime').value = S.weekly_time || '18:00';
   let notify = [];
@@ -527,6 +541,11 @@ $('#gear').onclick = async () => {
   $('#s_wtargets').innerHTML = notify.length ? notify.map(n =>
     `<label class="chk"><input type="checkbox" value="${esc(n.service)}" ${(S.weekly_targets || []).includes(n.service) ? 'checked' : ''}> ${esc(n.label)}</label>`).join('')
     : '<div class="muted small">Nie znaleziono usług powiadomień.</div>';
+  let energy = [];
+  try { energy = (await api('api/options')).energy || []; } catch (e) { /* bez listy liczników */ }
+  const opt = cur => '<option value="">— wybierz —</option>' + energy.map(x => `<option value="${esc(x.entity_id)}" ${x.entity_id === cur ? 'selected' : ''}>${esc(x.name)} (${esc(x.entity_id)})</option>`).join('');
+  $('#s_eimp').innerHTML = opt(S.grid_import_entity); $('#s_eexp').innerHTML = opt(S.grid_export_entity);
+  showMode();
   $('#s_err').textContent = ''; $('#sdlg').showModal();
 };
 $('#s_cancel').onclick = () => $('#sdlg').close();
@@ -534,6 +553,8 @@ $('#s_save').onclick = async () => {
   try {
     state.settings = await api('api/settings', 'PUT', {
       price_per_kwh: +$('#s_price').value, currency: $('#s_cur').value,
+      price_mode: $('#s_mode').value, import_price: +$('#s_imp').value, export_price: +$('#s_exp').value,
+      grid_import_entity: $('#s_eimp').value, grid_export_entity: $('#s_eexp').value,
       quiet_enabled: $('#s_quiet').checked, quiet_from: $('#s_qfrom').value, quiet_to: $('#s_qto').value,
       weekly_enabled: $('#s_weekly').checked, weekly_day: +$('#s_wday').value, weekly_time: $('#s_wtime').value,
       weekly_targets: [...document.querySelectorAll('#s_wtargets input:checked')].map(i => i.value)});

@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.5.0
+- Koszt cyklu z fotowoltaiką (net-billing): w ⚙ → „Cena prądu” → „Z fotowoltaiką” wybierasz liczniki pobranej i oddanej energii oraz wpisujesz cenę zakupu i wartość oddanej kWh z faktury. Koszt liczony godzina po godzinie z salda licznika: energia pokryta nadwyżką z paneli kosztuje tyle, ile utracona wartość oddanej energii, reszta pełną cenę z sieci. Dotyczy panelu, encji kosztu, powiadomień i podsumowania tygodnia.
+
 ## 0.4.0
 - Przycisk „Wyjęte" w powiadomieniu na telefonie, w panelu i jako encja przycisku w HA; przypomnienia (co X min, maks. N razy) aż do potwierdzenia.
 - Cisza nocna: zakończenia cykli z nocy przychodzą rano jako jedno zbiorcze powiadomienie.
