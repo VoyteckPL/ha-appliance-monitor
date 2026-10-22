@@ -17,6 +17,7 @@ from aiohttp import ClientSession, ClientTimeout, WSMsgType, web
 import discovery
 import bills as billslib
 import pricing
+import pvgain
 import programs
 from engine import (CFG_DEFAULTS, DEFAULT_MSG_FINISH, DEFAULT_MSG_REMIND, DEFAULT_MSG_START,
                     PRESETS, RUNNING, Appliance, entry_from_info, plural_cykl, render)
@@ -42,6 +43,7 @@ DEFAULT_SETTINGS = {
     "price_per_kwh": 1.0, "currency": "zł",
     "price_mode": "flat", "import_price": 1.24, "export_price": 0.30,
     "grid_import_entity": "", "grid_export_entity": "",
+    "pv_entity": "", "pv_cost": 0,
     "quiet_enabled": True, "quiet_from": "22:00", "quiet_to": "07:00",
     "weekly_enabled": False, "weekly_day": 6, "weekly_time": "18:00", "weekly_targets": [],
 }
@@ -247,6 +249,38 @@ class Monitor:
         if r is None:
             return None
         return {"cost": round(r[0], 3), "grid_kwh": round(r[1], 3), "pv_kwh": round(r[2], 3)}
+
+    async def ws_call(self, payload):
+        """Jednorazowe polecenie przez WebSocket HA (np. długoterminowe statystyki)."""
+        async with ClientSession() as s, s.ws_connect(WS_URL, heartbeat=30) as ws:
+            await ws.receive_json()
+            await ws.send_json({"type": "auth", "access_token": TOKEN})
+            if (await ws.receive_json()).get("type") != "auth_ok":
+                raise RuntimeError("autoryzacja WebSocket nie powiodła się")
+            await ws.send_json({"id": 1, **payload})
+            while True:
+                msg = await asyncio.wait_for(ws.receive_json(), 60)
+                if msg.get("id") == 1:
+                    if not msg.get("success"):
+                        raise RuntimeError(msg.get("error", {}).get("message", "błąd HA"))
+                    return msg["result"]
+
+    async def pv_production(self, entity):
+        """Miesięczna produkcja z falownika (kWh) z długoterminowych statystyk HA: {YYYY-MM: kWh}."""
+        st = await self.ha_get(f"/states/{entity}")
+        unit = st.get("attributes", {}).get("unit_of_measurement", "kWh")
+        k = {"Wh": 0.001, "MWh": 1000.0}.get(unit, 1.0)
+        res = await self.ws_call({"type": "recorder/statistics_during_period", "start_time": "2015-01-01T00:00:00Z",
+                                  "statistic_ids": [entity], "period": "month", "types": ["change"]})
+        out = {}
+        for row in res.get(entity, []):
+            t, ch = row.get("start"), row.get("change")
+            if t is None or ch is None:
+                continue
+            dt = (datetime.fromtimestamp(t / 1000, timezone.utc) if isinstance(t, (int, float))
+                  else datetime.fromisoformat(str(t).replace("Z", "+00:00"))).astimezone(self.tz)
+            out[f"{dt.year}-{dt.month:02d}"] = out.get(f"{dt.year}-{dt.month:02d}", 0.0) + ch * k
+        return out
 
     async def ha_post(self, path, data):
         async with self.session.post(f"{HA_BASE}{path}", headers=self.hdr(), json=data) as r:
@@ -775,6 +809,22 @@ async def api_bills_get(request):
     return web.json_response({"bills": list(reversed(items)), "stats": billslib.stats(items), "history": hist})
 
 
+async def api_pv(request):
+    mon = request.app["mon"]
+    ent = mon.settings.get("pv_entity")
+    if not ent:
+        return web.json_response({"configured": False})
+    try:
+        prod = await mon.pv_production(ent)
+    except Exception as e:
+        raise web.HTTPBadGateway(text=f"Nie mogę pobrać statystyk produkcji z HA: {e}")
+    if not prod:
+        raise web.HTTPBadGateway(text="HA nie ma długoterminowych statystyk dla tej encji (musi być licznik energii w kWh z klasą stanu total_increasing).")
+    res = pvgain.compute(prod, billslib.by_month(mon.bills.values()), float(mon.settings.get("pv_cost") or 0))
+    res.update(configured=True, entity=ent, first_data=min(prod))
+    return web.json_response(res)
+
+
 async def api_bills_csv(request):
     """Zestawienie rozliczeń z Energa 24 (CSV): wieloletnia historia kwot i zużycia."""
     mon = request.app["mon"]
@@ -866,6 +916,13 @@ async def api_settings_put(request):
             raise web.HTTPBadRequest(text="Niepoprawna encja licznika.")
         return v
 
+    pv_ent = str(body.get("pv_entity", mon.settings.get("pv_entity", "")) or "")
+    if pv_ent and not re.fullmatch(r"sensor\.[a-z0-9_]+", pv_ent):
+        raise web.HTTPBadRequest(text="Niepoprawna encja falownika.")
+    try:
+        pv_cost = min(max(float(body.get("pv_cost", mon.settings.get("pv_cost", 0)) or 0), 0.0), 10_000_000.0)
+    except (TypeError, ValueError):
+        raise web.HTTPBadRequest(text="Koszt instalacji musi być liczbą.")
     mode = "pv" if body.get("price_mode") == "pv" else "flat"
     if mode == "pv" and not (ent("grid_import_entity") and ent("grid_export_entity")):
         raise web.HTTPBadRequest(text="Wybierz oba liczniki: pobór i oddawanie energii.")
@@ -873,6 +930,7 @@ async def api_settings_put(request):
         "price_per_kwh": round(price, 4), "currency": cur,
         "price_mode": mode, "import_price": num("import_price", 1.24), "export_price": num("export_price", 0.3),
         "grid_import_entity": ent("grid_import_entity"), "grid_export_entity": ent("grid_export_entity"),
+        "pv_entity": pv_ent, "pv_cost": round(pv_cost, 2),
         "quiet_enabled": bool(body.get("quiet_enabled", True)),
         "quiet_from": hhmm("quiet_from", "22:00"), "quiet_to": hhmm("quiet_to", "07:00"),
         "weekly_enabled": bool(body.get("weekly_enabled", False)), "weekly_day": wday,
@@ -1009,6 +1067,7 @@ async def make_app():
     app.router.add_post("/api/appliances/{id}/unload", api_unload)
     app.router.add_post("/api/replay", api_replay)
     app.router.add_get("/api/bills", api_bills_get)
+    app.router.add_get("/api/pv", api_pv)
     app.router.add_post("/api/bills", api_bills_post)
     app.router.add_post("/api/bills/csv", api_bills_csv)
     app.router.add_delete("/api/bills/{month}", api_bills_delete)
