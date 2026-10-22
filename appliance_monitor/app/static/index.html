@@ -750,16 +750,16 @@ function exactSection(r) {
   if (!ms.length) return `<div class="banner">Są statystyki produkcji z HA, ale nie pokrywają się z miesiącami z fakturami PDF.</div>`;
   pvData = r;
   const f = ms[0], l = ms[ms.length - 1], pl = v => Math.round(v).toLocaleString('pl-PL');
-  return `<div class="sec" style="margin-top:0">Zysk miesiąc po miesiącu (produkcja z falownika + faktury, od ${monthName(f.month)})</div>
-    ${pvBox('run', '☀️', `Od ${monthName(f.month)} do ${monthName(l.month)} (${t.months} mies.) fotowoltaika dała Ci <b>${zl(t.benefit)}</b>, średnio ${zl(t.benefit / t.months)} miesięcznie.`)}
+  return `${pvBox('run', '☀️', `Fotowoltaika dała Ci od ${monthName(f.month)} <b>${zl(t.benefit)}</b> (średnio ${zl(t.benefit / t.months)} miesięcznie).`)}
     ${roiBox(t.benefit, t.cost, t.avg_month)}
-    ${t.months < 12 ? '' : ''}${r.missing && r.missing.length ? `<div class="banner">Brak faktur PDF lub produkcji dla: ${esc(r.missing.map(monthName).join(', '))}. Zysk za te miesiące nie jest wliczony.</div>` : ''}
-    ${pvBox('run', '🏠', `Wyprodukowałeś <b>${pl(t.production)} kWh</b>, z tego sam zużyłeś <b>${pl(t.self)} kWh</b>. Dzięki temu nie kupiłeś ich z sieci: <b>${zl(t.avoided)}</b> oszczędności.`)}
-    ${pvBox('run', '🔌', `Oddałeś do sieci <b>${pl(t.export)} kWh</b> i dostałeś za to <b>${zl(t.deposit)}</b> w depozycie.`)}
+    <details style="margin:8px 0"><summary><b>Ile zarobiłeś: szczegóły</b></summary>
+    ${r.missing && r.missing.length ? `<div class="banner">Brak faktur PDF lub produkcji dla: ${esc(r.missing.map(monthName).join(', '))}. Zysk za te miesiące nie jest wliczony.</div>` : ''}
+    ${pvBox('run', '🏠', `Wyprodukowałeś <b>${pl(t.production)} kWh</b>, sam zużyłeś <b>${pl(t.self)} kWh</b> (nie kupiłeś ich: <b>${zl(t.avoided)}</b>).`)}
+    ${pvBox('run', '🔌', `Oddałeś <b>${pl(t.export)} kWh</b> i dostałeś <b>${zl(t.deposit)}</b> w depozycie.`)}
     <div id="st_pvex">
     <div class="sec">Zysk w każdym miesiącu</div>${legend([['var(--run)', 'oszczędność na własnym zużyciu'], ['var(--accent)', 'depozyt za oddaną energię']])}
     ${barChart(ms.map(x => ({month: x.month, a: x.avoided, d: x.deposit})), [{n: 'oszczędność', c: 'var(--run)', f: b => b.a, t: v => zl(v)}, {n: 'depozyt', c: 'var(--accent)', f: b => b.d, t: v => zl(v)}], true)}</div>
-    <div class="hint">Zysk = (produkcja − oddane do sieci) × cena zakupu z faktury + depozyt. Produkcja ze statystyk HA${r.first_data ? ' od ' + monthName(r.first_data) : ''}; im dłużej HA zbiera dane z falownika, tym ta część jest dłuższa.</div>`;
+    <div class="hint">Zysk = (produkcja − oddane) × cena zakupu + depozyt. Produkcja z eksportu falownika${r.first_data ? ' (od ' + monthName(r.first_data) + ')' : ''} i HA.</div></details>`;
 }
 async function pvCard() {
   let r;

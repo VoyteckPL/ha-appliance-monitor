@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.13.2
+- Karta fotowoltaiki w skrócie: zysk i zwrot na wierzchu, wykresy i szczegóły w rozwijanym „Ile zarobiłeś”.
+
 ## 0.13.1
 - Eksport miesięczny produkcji z Solarmana (kolumna „Wytwarzanie energii”, czas w formacie 2023/5) jest rozpoznawany. Wgrany daje zysk miesiąc po miesiącu bez licznika w HA; licznik z HA dopełnia świeże miesiące. Rok po roku i stary szacunek zwinięte pod spodem.
 
