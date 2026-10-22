@@ -43,7 +43,7 @@ DEFAULT_SETTINGS = {
     "price_per_kwh": 1.0, "currency": "zł",
     "price_mode": "flat", "import_price": 1.24, "export_price": 0.30,
     "grid_import_entity": "", "grid_export_entity": "",
-    "pv_entity": "", "pv_cost": 0,
+    "pv_entity": "", "pv_cost": 30000,
     "quiet_enabled": True, "quiet_from": "22:00", "quiet_to": "07:00",
     "weekly_enabled": False, "weekly_day": 6, "weekly_time": "18:00", "weekly_targets": [],
 }

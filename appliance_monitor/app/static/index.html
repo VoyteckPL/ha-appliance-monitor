@@ -716,7 +716,9 @@ async function pvCard() {
     ${pvLine(ms, t.cost)}
     <div class="sec">Zysk w każdym miesiącu</div>${legend([['var(--run)', 'oszczędność na własnym zużyciu'], ['var(--accent)', 'depozyt za oddaną energię']])}
     ${barChart(ms.map(x => ({month: x.month, a: x.avoided, d: x.deposit})), [{n: 'oszczędność', c: 'var(--run)', f: b => b.a, t: v => zl(v)}, {n: 'depozyt', c: 'var(--accent)', f: b => b.d, t: v => zl(v)}], true)}
-    <div class="hint">Zysk = (produkcja − oddane do sieci) × cena zakupu z faktury + depozyt za oddaną energię. Produkcja pochodzi ze statystyk HA${r.first_data ? ' (od ' + monthName(r.first_data) + ')' : ''}. ${r.missing.length ? 'Pominięto ' + r.missing.length + ' mies. bez faktury PDF.' : ''} <a href="#" id="pv_edit">Zmień ustawienia</a></div>`;
+    <div class="hint">Zysk = (produkcja − oddane do sieci) × cena zakupu z faktury + depozyt za oddaną energię. Produkcja pochodzi ze statystyk HA${r.first_data ? ' (od ' + monthName(r.first_data) + ')' : ''}. ${r.missing.length ? 'Pominięto ' + r.missing.length + ' mies. bez faktury PDF.' : ''} <a href="#" id="pv_edit">Zmień licznik produkcji</a></div>
+    <div class="grid2" style="align-items:end"><label>Koszt instalacji (zł)<input type="number" id="pv_cost2" min="0" step="100" value="${t.cost || ''}"></label>
+      <div><button id="pv_cost_save">Zapisz koszt</button> <span id="pv_cost_err" class="small" style="color:var(--danger)"></span></div></div>`;
   return statCard('Fotowoltaika: ile zarobiłeś', html);
 }
 function pvLine(ms, cost) {
@@ -734,8 +736,13 @@ function pvSetup(r) {
     <button class="primary" id="pv_save">Zapisz i policz</button> <span id="pv_err" class="small" style="color:var(--danger)"></span></div>`;
 }
 async function pvWire() {
-  const form = $('#pv_form'); if (!form) return;
-  const ed = $('#pv_edit'); if (ed) ed.onclick = e => { e.preventDefault(); form.hidden = false; };
+  const form = $('#pv_form');
+  const ed = $('#pv_edit'); if (ed) ed.onclick = e => { e.preventDefault(); if (form) form.hidden = false; };
+  const cs = $('#pv_cost_save'); if (cs) cs.onclick = async () => {
+    try { state.settings = await api('api/settings', 'PUT', {...state.settings, pv_cost: +$('#pv_cost2').value || 0}); renderStats(); }
+    catch (e) { $('#pv_cost_err').textContent = e.message; }
+  };
+  if (!form) return;
   let energy = [];
   try { energy = (await api('api/options')).energy || []; } catch (e) { /* bez listy */ }
   $('#pv_ent').innerHTML = '<option value="">— wybierz —</option>' + energy.map(x => `<option value="${esc(x.entity_id)}" ${x.entity_id === state.settings.pv_entity ? 'selected' : ''}>${esc(x.name)} (${esc(x.entity_id)})</option>`).join('');

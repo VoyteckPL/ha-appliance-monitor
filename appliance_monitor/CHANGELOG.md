@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.11.1
+- Pole „Koszt instalacji (zł)” zawsze widoczne w karcie fotowoltaiki (domyślnie 30 000 zł), zmiana od razu przelicza zwrot.
+
 ## 0.11.0
 - „Fotowoltaika: ile zarobiłeś”: licznik produkcji z falownika (statystyki długoterminowe HA) + faktury dają zysk od początku instalacji: oszczędność na własnym zużyciu (produkcja − oddane, po cenie zakupu) plus depozyt za oddaną energię. Podsumowanie, wykres zysku narastająco (z linią kosztu instalacji i szacunkiem zwrotu), wykres miesięczny, podpowiedzi i panel miesiąca.
 
