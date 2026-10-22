@@ -100,15 +100,22 @@ def test_render_and_discovery():
     assert msg == "Pralka: 1 h 15 min, 0.85 kWh"
     a = make()
     feed(a, 0, 100, 100)
-    disc = discovery.discovery_messages(a)
-    assert len(disc) == 5
+    disc = discovery.discovery_messages(a, "PLN")
+    assert len(disc) == 12 and len({t for t, _ in disc}) == 12
     for topic, payload in disc:
         d = json.loads(payload)
         assert topic.startswith("homeassistant/") and d["unique_id"].startswith("am_pralka_")
         assert d["device"]["identifiers"] == ["appliance_monitor_pralka"]
-    states = dict(discovery.state_messages(a, 100))
+        assert ("command_topic" in d) == topic.startswith("homeassistant/button/")
+    cost = json.loads(dict(disc)["homeassistant/sensor/am_pralka/cost/config"])
+    assert cost["unit_of_measurement"] == "PLN"
+    states = dict(discovery.state_messages(a, 100, {"cost": "0.97", "today_cycles": 0, "program": None}))
     assert states["appliance_monitor/pralka/state"] == "running"
     assert states["appliance_monitor/pralka/running"] == "ON"
+    assert states["appliance_monitor/pralka/cost"] == "0.97" and states["appliance_monitor/pralka/today_cycles"] == "0"
+    assert "appliance_monitor/pralka/program" not in states and states["appliance_monitor/pralka/eta"] == "none"
+    rm = discovery.removal_topics("pralka")
+    assert len(rm) == 12 + 11 and all(t in rm for t, _ in disc)
 
 
 def test_curve_and_peak_recorded():
@@ -159,6 +166,50 @@ def test_replay_unavailable_does_not_end_cycle():
     r = [(0, 0.0), (60, 150.0), (1000, None), (1900, 150.0), (3000, 0.0), (4000, 0.0)]
     cycles = replay(cfg, r)
     assert len(cycles) == 1 and cycles[0]["duration_s"] > 2500
+
+
+def test_reminders_and_unload():
+    a = make(remind_every=1, remind_max=2, reset_after=240)
+    ev = feed(a, 0, 1000, 100) + feed(a, 1000, 2000, 0)
+    assert a.state == FINISHED
+    rem = [i for k, i in ev if k == "remind"]
+    assert len(rem) == 2 and 55 < rem[0]["ago_s"] < 70 and 115 < rem[1]["ago_s"] < 130   # po 1 i 2 min, potem stop
+    assert kinds(a.unload()) == ["unloaded"] and a.state == IDLE and a.reminders_sent == 0
+    assert a.unload() == []                                                              # drugi raz nic nie robi
+    # bez przypomnień (domyślnie) nic nie przychodzi
+    b = make()
+    ev = feed(b, 0, 1000, 100) + feed(b, 1000, 4000, 0)
+    assert "remind" not in kinds(ev)
+
+
+def test_render_placeholders_and_plural():
+    from engine import plural_cykl
+    info = {"name": "Pralka", "duration_s": 3600, "energy_wh": 900, "cost": "0.90 zł", "program": "Eko", "ago_s": 1800}
+    assert render("{name} {program}: {cost}, gotowe od {ago}", info) == "Pralka Eko: 0.90 zł, gotowe od 30 min"
+    assert render("{name}  {program}  koniec", {"name": "Pralka"}) == "Pralka koniec"   # pusty program nie zostawia dziur
+    assert [plural_cykl(n) for n in (1, 2, 5, 12, 22, 25)] == ["cykl", "cykle", "cykli", "cykli", "cykle", "cykli"]
+
+
+def test_programs_and_anomaly():
+    import programs as pg
+    hist = [{"start": i, "duration_s": 4800 + (i % 3) * 60, "energy_wh": 900 + (i % 4) * 25} for i in range(10)]
+    cls = pg.clusters(hist)
+    assert len(cls) == 1 and cls[0]["count"] == 10 and 4750 < cls[0]["duration_s"] < 4950
+    normal = {"duration_s": 4850, "energy_wh": 920}
+    long_ = {"duration_s": 7800, "energy_wh": 1100}           # inny, dłuższy program
+    assert pg.assign(normal, cls) == 0 and pg.assign(long_, cls) is None
+    assert pg.anomaly(normal, hist) is None
+    text = pg.anomaly(long_, hist)
+    assert text and "nietypowy" in text and "2 h 10 min" in text
+    assert pg.anomaly(long_, hist[:5]) is None                  # za mało historii
+    assert pg.anomaly({"duration_s": 5300, "energy_wh": 980}, hist) is None   # lekko inny: bez alarmu
+    # nazwy: zapisana wygrywa, reszta numerowana
+    two = hist + [{"start": 100 + i, "duration_s": 7800 + i * 30, "energy_wh": 1150 + i * 10} for i in range(3)]
+    cls2 = pg.clusters(two)
+    assert len(cls2) == 2
+    named = pg.name_programs(cls2, [{"name": "Intensywny", "duration_s": 7900, "energy_wh": 1160}])
+    assert [n["name"] for n in named] == ["Program 1", "Intensywny"] and [n["custom"] for n in named] == [False, True]
+    assert pg.program_of(long_, named) == "Intensywny" and pg.program_of({"duration_s": 100, "energy_wh": 5}, named) is None
 
 
 if __name__ == "__main__":

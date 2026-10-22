@@ -6,72 +6,80 @@ from engine import RUNNING, PRESETS
 
 STATUS_TOPIC = "appliance_monitor/status"
 STATE_OPTIONS = ["idle", "running", "finished"]
+COMMAND_SUBSCRIBE = "appliance_monitor/+/unloaded/set"
+
+# (komponent, klucz tematu) wszystkich encji urządzenia
+ENTITIES = [
+    ("sensor", "state"), ("binary_sensor", "running"), ("sensor", "energy"), ("sensor", "duration"),
+    ("sensor", "last_finished"), ("sensor", "cost"), ("sensor", "program"), ("sensor", "today_cycles"),
+    ("sensor", "today_energy"), ("sensor", "week_cycles"), ("sensor", "eta"), ("button", "unloaded"),
+]
 
 
-def _topics(a):
-    base = f"appliance_monitor/{a.cfg['id']}"
-    return {k: f"{base}/{k}" for k in ("state", "running", "energy", "duration", "last_finished")}
+def base_topic(cid):
+    return f"appliance_monitor/{cid}"
 
 
-def discovery_messages(a):
+def command_topic(cid):
+    return f"{base_topic(cid)}/unloaded/set"
+
+
+def _t(cid, key):
+    return f"{base_topic(cid)}/{key}"
+
+
+def discovery_messages(a, currency="zł"):
     """Lista (topic, payload_json) konfiguracji discovery."""
     cid = a.cfg["id"]
-    t = _topics(a)
     icon = PRESETS.get(a.cfg.get("preset"), PRESETS["other"])["icon"]
-    device = {
-        "identifiers": [f"appliance_monitor_{cid}"],
-        "name": a.cfg["name"],
-        "manufacturer": "Appliance Monitor",
-        "model": "Detektor cyklu",
-    }
     common = {
         "availability_topic": STATUS_TOPIC,
-        "device": device,
+        "device": {
+            "identifiers": [f"appliance_monitor_{cid}"],
+            "name": a.cfg["name"],
+            "manufacturer": "Appliance Monitor",
+            "model": "Detektor cyklu",
+        },
         "has_entity_name": True,
         "origin": {"name": "Appliance Monitor"},
     }
-    ents = [
-        ("sensor", "state", {
-            "name": "Stan", "unique_id": f"am_{cid}_state", "state_topic": t["state"],
-            "device_class": "enum", "options": STATE_OPTIONS, "icon": icon,
-        }),
-        ("binary_sensor", "running", {
-            "name": "Pracuje", "unique_id": f"am_{cid}_running", "state_topic": t["running"],
-            "payload_on": "ON", "payload_off": "OFF", "device_class": "power",
-        }),
-        ("sensor", "energy", {
-            "name": "Energia cyklu", "unique_id": f"am_{cid}_energy", "state_topic": t["energy"],
-            "device_class": "energy", "unit_of_measurement": "kWh",
-        }),
-        ("sensor", "duration", {
-            "name": "Czas cyklu", "unique_id": f"am_{cid}_duration", "state_topic": t["duration"],
-            "device_class": "duration", "unit_of_measurement": "min",
-        }),
-        ("sensor", "last_finished", {
-            "name": "Ostatnie zakończenie", "unique_id": f"am_{cid}_last_finished",
-            "state_topic": t["last_finished"], "device_class": "timestamp",
-        }),
-    ]
+    spec = {
+        "state": {"name": "Stan", "device_class": "enum", "options": STATE_OPTIONS, "icon": icon},
+        "running": {"name": "Pracuje", "payload_on": "ON", "payload_off": "OFF", "device_class": "power"},
+        "energy": {"name": "Energia cyklu", "device_class": "energy", "unit_of_measurement": "kWh"},
+        "duration": {"name": "Czas cyklu", "device_class": "duration", "unit_of_measurement": "min"},
+        "last_finished": {"name": "Ostatnie zakończenie", "device_class": "timestamp"},
+        "cost": {"name": "Koszt ostatniego cyklu", "unit_of_measurement": currency, "icon": "mdi:cash"},
+        "program": {"name": "Program ostatniego cyklu", "icon": "mdi:format-list-bulleted"},
+        "today_cycles": {"name": "Cykle dziś", "state_class": "measurement", "icon": "mdi:counter"},
+        "today_energy": {"name": "Energia dziś", "device_class": "energy", "unit_of_measurement": "kWh",
+                         "state_class": "total_increasing"},
+        "week_cycles": {"name": "Cykle (7 dni)", "state_class": "measurement", "icon": "mdi:counter"},
+        "eta": {"name": "Szacowany koniec", "device_class": "timestamp",
+                "value_template": "{{ none if value == 'none' else value }}"},
+        "unloaded": {"name": "Wyjęte", "icon": "mdi:check-circle-outline", "payload_press": "PRESS",
+                     "command_topic": command_topic(cid)},
+    }
     out = []
-    for comp, obj, payload in ents:
-        payload.update(common)
-        out.append((f"homeassistant/{comp}/am_{cid}/{obj}/config", json.dumps(payload)))
+    for comp, key in ENTITIES:
+        payload = {"unique_id": f"am_{cid}_{key}", **spec[key], **common}
+        if comp != "button":
+            payload["state_topic"] = _t(cid, key)
+        out.append((f"homeassistant/{comp}/am_{cid}/{key}/config", json.dumps(payload)))
     return out
 
 
 def removal_topics(cid):
-    comps = [("sensor", "state"), ("binary_sensor", "running"), ("sensor", "energy"),
-             ("sensor", "duration"), ("sensor", "last_finished")]
-    cfg = [f"homeassistant/{c}/am_{cid}/{o}/config" for c, o in comps]
-    base = f"appliance_monitor/{cid}"
-    return cfg + [f"{base}/{k}" for k in ("state", "running", "energy", "duration", "last_finished")]
+    cfg = [f"homeassistant/{c}/am_{cid}/{k}/config" for c, k in ENTITIES]
+    return cfg + [_t(cid, k) for c, k in ENTITIES if c != "button"]
 
 
-def state_messages(a, now):
-    """Lista (topic, payload) aktualnych stanów."""
-    t = _topics(a)
+def state_messages(a, now, extra=None):
+    """Lista (topic, payload) aktualnych stanów. extra: policzone w main (koszt, program, dziś, 7 dni, eta)."""
+    extra = extra or {}
+    cid = a.cfg["id"]
     running = a.state == RUNNING
-    if running and a.cycle_start:
+    if running and a.cycle_start is not None:
         energy = a.energy_wh / 1000
         duration = int((now - a.cycle_start) / 60)
     elif a.last_cycle:
@@ -80,12 +88,16 @@ def state_messages(a, now):
     else:
         energy, duration = 0.0, 0
     msgs = [
-        (t["state"], a.state),
-        (t["running"], "ON" if running else "OFF"),
-        (t["energy"], f"{energy:.3f}"),
-        (t["duration"], str(duration)),
+        (_t(cid, "state"), a.state),
+        (_t(cid, "running"), "ON" if running else "OFF"),
+        (_t(cid, "energy"), f"{energy:.3f}"),
+        (_t(cid, "duration"), str(duration)),
     ]
     if a.last_cycle:
         iso = datetime.fromtimestamp(a.last_cycle["end"], timezone.utc).isoformat()
-        msgs.append((t["last_finished"], iso))
+        msgs.append((_t(cid, "last_finished"), iso))
+    for key in ("cost", "program", "today_cycles", "today_energy", "week_cycles"):
+        if extra.get(key) is not None:
+            msgs.append((_t(cid, key), str(extra[key])))
+    msgs.append((_t(cid, "eta"), extra.get("eta") or "none"))
     return msgs

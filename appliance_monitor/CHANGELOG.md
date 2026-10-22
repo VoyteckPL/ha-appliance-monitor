@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.0
+- Przycisk „Wyjęte" w powiadomieniu na telefonie, w panelu i jako encja przycisku w HA; przypomnienia (co X min, maks. N razy) aż do potwierdzenia.
+- Cisza nocna: zakończenia cykli z nocy przychodzą rano jako jedno zbiorcze powiadomienie.
+- Alarm o nietypowym cyklu (np. dużo dłuższym lub droższym niż zwykle).
+- Rozpoznawanie programów z historii, własne nazwy (np. Eko), porównanie z poprzednim cyklem tego programu.
+- Nowe encje: koszt ostatniego cyklu, program, cykle dziś / 7 dni, energia dziś, szacowany koniec, przycisk „Wyjęte".
+- Placeholdery w treści: {cost} {program} {ago}; tygodniowe podsumowanie (opcjonalne).
+
 ## 0.3.0
 - Naprawa animacji: ikony ruszają się tylko, gdy urządzenie pracuje (wcześniej kręciły się zawsze).
 - Nowe nazwy stanów w panelu: Wyłączone / Pracuje / Gotowe (zamiast „Czeka").

@@ -4,19 +4,20 @@ import json
 import logging
 import os
 import re
+import statistics
 import time
 import unicodedata
-from pathlib import Path
-
-import statistics
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import paho.mqtt.client as mqtt
-from aiohttp import ClientSession, ClientTimeout, web
+from aiohttp import ClientSession, ClientTimeout, WSMsgType, web
 
 import discovery
-from engine import (DEFAULT_MSG_FINISH, DEFAULT_MSG_START, FINISHED, PRESETS,
-                    RUNNING, Appliance, entry_from_info, render)
+import programs
+from engine import (CFG_DEFAULTS, DEFAULT_MSG_FINISH, DEFAULT_MSG_REMIND, DEFAULT_MSG_START,
+                    PRESETS, RUNNING, Appliance, entry_from_info, plural_cykl, render)
 from replay import replay
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -32,7 +33,21 @@ POLL_S = 5
 STATIC = Path(__file__).parent / "static"
 HISTORY_MAX = 200
 RUNTIME_SAVE_EVERY_S = 60
-DEFAULT_SETTINGS = {"price_per_kwh": 1.0, "currency": "zł"}
+WS_URL = os.environ.get("WS_URL", "ws://supervisor/core/websocket")
+ACTION_PREFIX = "AM_UNLOADED_"
+TIME_RE = re.compile(r"([01]\d|2[0-3]):[0-5]\d")
+DEFAULT_SETTINGS = {
+    "price_per_kwh": 1.0, "currency": "zł",
+    "quiet_enabled": True, "quiet_from": "22:00", "quiet_to": "07:00",
+    "weekly_enabled": False, "weekly_day": 6, "weekly_time": "18:00", "weekly_targets": [],
+}
+
+
+def default_tz():
+    try:
+        return ZoneInfo(os.environ.get("TZ") or "UTC")
+    except Exception:
+        return timezone.utc
 
 
 # ---------- pliki ----------
@@ -83,6 +98,7 @@ class MqttOut:
         c.will_set(discovery.STATUS_TOPIC, "offline", qos=1, retain=True)
         c.on_connect = self._on_connect
         c.on_disconnect = self._on_disconnect
+        c.on_message = self._on_message
         c.connect_async(host, port, keepalive=60)
         c.loop_start()
         self.client = c
@@ -94,8 +110,14 @@ class MqttOut:
             return
         self.connected = True
         client.publish(discovery.STATUS_TOPIC, "online", qos=1, retain=True)
+        client.subscribe(discovery.COMMAND_SUBSCRIBE, qos=1)
         log.info("MQTT: połączono")
         self.loop.call_soon_threadsafe(self.mon.republish_all)
+
+    def _on_message(self, client, userdata, msg):
+        parts = msg.topic.split("/")  # appliance_monitor/<id>/unloaded/set (przycisk „Wyjęte" w HA)
+        if len(parts) == 4 and parts[0] == "appliance_monitor" and parts[2:] == ["unloaded", "set"]:
+            self.loop.call_soon_threadsafe(self.mon.unload, parts[1], "przycisk w HA")
 
     def _on_disconnect(self, client, userdata, flags, reason_code=None, properties=None):
         self.connected = False
@@ -119,6 +141,13 @@ class Monitor:
         self.ha_ok = False
         self.settings = dict(DEFAULT_SETTINGS)
         self.last_rt_save = 0.0
+        self.tz = default_tz()
+        self.tz_ok = False
+        self.last_tz_try = 0.0
+        self.pending = []          # powiadomienia z nocy czekające na zbiorczą wysyłkę
+        self.programs = {}         # nazwy programów nadane przez użytkownika
+        self.prog_ver = 0
+        self._prog_cache = {}
 
     # -- trwałość
     def load(self):
@@ -126,7 +155,11 @@ class Monitor:
         rt = load_json(DATA / "state.json", {})
         self.history = load_json(DATA / "history.json", {})
         self.settings.update(load_json(DATA / "settings.json", {}))
+        self.programs = load_json(DATA / "programs.json", {})
+        self.pending = load_json(DATA / "pending.json", [])
         for c in cfgs:
+            for k, v in CFG_DEFAULTS.items():  # urządzenia zapisane w starszych wersjach
+                c.setdefault(k, v)
             self.appliances[c["id"]] = Appliance(c, rt.get(c["id"]))
 
     def save_cfg(self):
@@ -198,22 +231,192 @@ class Monitor:
             v /= 1000
         return v
 
+    # -- czas lokalny, cisza nocna
+    def local(self, ts):
+        return datetime.fromtimestamp(ts, self.tz)
+
+    async def load_tz(self):
+        try:
+            self.tz = ZoneInfo((await self.ha_get("/config"))["time_zone"])
+            self.tz_ok = True
+        except Exception as e:
+            log.warning("Nie mogę ustalić strefy czasowej z HA (%s), używam %s", e, self.tz)
+
+    def in_quiet(self, ts):
+        s = self.settings
+        try:
+            if not s["quiet_enabled"]:
+                return False
+            mins = lambda v: int(v[:2]) * 60 + int(v[3:5])  # noqa: E731
+            a, b = mins(s["quiet_from"]), mins(s["quiet_to"])
+            loc = self.local(ts)
+            cur = loc.hour * 60 + loc.minute
+        except (KeyError, ValueError, TypeError):
+            return False
+        if a == b:
+            return False
+        return a <= cur < b if a < b else (cur >= a or cur < b)
+
+    def money(self, wh):
+        return f"{wh / 1000 * self.settings['price_per_kwh']:.2f} {self.settings['currency']}"
+
     # -- powiadomienia
+    async def send(self, targets, title, message, unload_for=None):
+        for t in targets:
+            payload = {"title": title, "message": message}
+            if unload_for and t.startswith("mobile_app_"):  # przyciski akcji znają tylko telefony z aplikacją HA
+                payload["data"] = {"tag": f"am_{unload_for}",
+                                   "actions": [{"action": ACTION_PREFIX + unload_for, "title": "Wyjęte"}]}
+            try:
+                await self.ha_post(f"/services/notify/{t}", payload)
+            except Exception as e:
+                log.warning("Powiadomienie %s nie poszło: %s", t, e)
+
     async def notify(self, a, kind, info):
         c = a.cfg
+        info = dict(info)
+        if info.get("energy_wh") is not None:
+            info["cost"] = self.money(info["energy_wh"])
+        lines = []
         if kind == "start":
-            if not c["notify_start"]:
-                return
-            msg = render(c["msg_start"], info)
-        else:
-            if not c["notify_finish"]:
-                return
-            msg = render(c["msg_finish"], info)
-        for target in c["notify_targets"]:
+            if c["notify_start"]:
+                lines.append(render(c["msg_start"], info))
+        elif kind == "finish":
+            if c["notify_finish"]:
+                lines.append(render(c["msg_finish"], info))
+            if info.get("anomaly") and c.get("notify_anomaly", True):
+                lines.append("⚠ " + info["anomaly"][:1].upper() + info["anomaly"][1:])
+        elif kind == "remind":
+            lines.append(render(c.get("msg_remind") or DEFAULT_MSG_REMIND, info))
+        if not lines or not c["notify_targets"]:
+            return
+        message = "\n".join(lines)
+        now = time.time()
+        if c.get("quiet", True) and self.in_quiet(now):
+            if kind == "finish":  # zakończenia z nocy wysyłamy rano zbiorczo, starty i przypomnienia pomijamy
+                self.pending.append({"name": c["name"], "ts": now, "text": message.replace("\n", " "),
+                                     "targets": list(c["notify_targets"])})
+                save_json(DATA / "pending.json", self.pending)
+            return
+        unload = c["id"] if kind in ("finish", "remind") and c.get("unload_button", True) else None
+        await self.send(c["notify_targets"], c["name"], message, unload)
+
+    async def flush_pending(self):
+        items, self.pending = self.pending, []
+        save_json(DATA / "pending.json", self.pending)
+        by_target = {}
+        for it in items:
+            for t in it["targets"]:
+                by_target.setdefault(t, []).append(it)
+        for t, its in by_target.items():
+            lines = [f"{self.local(i['ts']).strftime('%H:%M')} {i['text']}" for i in its]
+            await self.send([t], "Powiadomienia z nocy", "\n".join(lines))
+
+    def weekly_text(self, now):
+        lines, total_n, total_wh = [], 0, 0.0
+        for a in self.appliances.values():
+            es = [h for h in self.history.get(a.cfg["id"], []) if h["start"] >= now - 7 * 86400]
+            if es:
+                wh = sum(h["energy_wh"] for h in es)
+                total_n += len(es)
+                total_wh += wh
+                lines.append(f"{a.cfg['name']}: {len(es)} {plural_cykl(len(es))}, {wh / 1000:.2f} kWh, {self.money(wh)}")
+        if not lines:
+            return "W ostatnich 7 dniach nie było żadnych cykli."
+        lines.append(f"Razem: {total_n} {plural_cykl(total_n)}, {total_wh / 1000:.2f} kWh, {self.money(total_wh)}")
+        return "\n".join(lines)
+
+    async def maybe_weekly(self, now):
+        s = self.settings
+        if not s.get("weekly_enabled") or not s.get("weekly_targets") or not self.appliances:
+            return
+        loc = self.local(now)
+        if loc.weekday() != int(s["weekly_day"]):
+            return
+        if (loc.hour, loc.minute) < (int(s["weekly_time"][:2]), int(s["weekly_time"][3:5])):
+            return
+        key = loc.date().isoformat()
+        if s.get("weekly_last") == key:
+            return
+        s["weekly_last"] = key
+        save_json(DATA / "settings.json", s)
+        await self.send(s["weekly_targets"], "Podsumowanie tygodnia", self.weekly_text(now))
+
+    async def housekeeping(self, now):
+        if not self.tz_ok and now - self.last_tz_try >= 300:
+            self.last_tz_try = now
+            await self.load_tz()
+        if self.pending and not self.in_quiet(now):
+            await self.flush_pending()
+        await self.maybe_weekly(now)
+
+    # -- „Wyjęte": przycisk w panelu, w HA albo w powiadomieniu
+    def unload(self, cid, source=""):
+        a = self.appliances.get(cid)
+        if not a or not a.unload():
+            return False
+        log.info("%s: wyjęte (%s)", a.cfg["name"], source)
+        self.save_runtime()
+        self.publish_state(a, time.time())
+        return True
+
+    async def ws_loop(self):
+        """Nasłuch akcji z powiadomień telefonu (przycisk „Wyjęte") przez WebSocket HA."""
+        while True:
             try:
-                await self.ha_post(f"/services/notify/{target}", {"title": c["name"], "message": msg})
+                async with ClientSession() as s, s.ws_connect(WS_URL, heartbeat=30) as ws:
+                    await ws.receive_json()  # auth_required
+                    await ws.send_json({"type": "auth", "access_token": TOKEN})
+                    msg = await ws.receive_json()
+                    if msg.get("type") != "auth_ok":
+                        raise RuntimeError(f"autoryzacja WebSocket: {msg.get('type')}")
+                    await ws.send_json({"id": 1, "type": "subscribe_events",
+                                        "event_type": "mobile_app_notification_action"})
+                    log.info("WebSocket HA: nasłuch akcji z powiadomień")
+                    async for m in ws:
+                        if m.type != WSMsgType.TEXT:
+                            continue
+                        data = m.json()
+                        if data.get("type") == "event":
+                            action = str(data["event"].get("data", {}).get("action", ""))
+                            if action.startswith(ACTION_PREFIX):
+                                self.unload(action[len(ACTION_PREFIX):], "powiadomienie")
+            except asyncio.CancelledError:
+                raise
             except Exception as e:
-                log.warning("Powiadomienie %s nie poszło: %s", target, e)
+                log.warning("WebSocket HA: %s (ponawiam za 15 s)", e)
+            await asyncio.sleep(15)
+
+    # -- programy i statystyki
+    def named_programs(self, cid):
+        hist = self.history.get(cid, [])
+        key = (len(hist), hist[-1]["start"] if hist else 0, self.prog_ver)
+        hit = self._prog_cache.get(cid)
+        if hit and hit[0] == key:
+            return hit[1]
+        named = programs.name_programs(programs.clusters(hist), self.programs.get(cid, []))
+        self._prog_cache[cid] = (key, named)
+        return named
+
+    def typical(self, cid):
+        recent = [h["duration_s"] for h in self.history.get(cid, [])[-10:]]
+        return int(statistics.median(recent)) if len(recent) >= 3 else None
+
+    def extra(self, a, now):
+        """Wartości dodatkowych encji HA: koszt, program, dziś, 7 dni, szacowany koniec."""
+        cid = a.cfg["id"]
+        hist = self.history.get(cid, [])
+        day0 = self.local(now).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+        today = [h for h in hist if h["start"] >= day0]
+        ex = {"today_cycles": len(today), "week_cycles": len([h for h in hist if h["start"] >= now - 7 * 86400]),
+              "today_energy": f"{sum(h['energy_wh'] for h in today) / 1000:.3f}"}
+        if hist:
+            ex["cost"] = f"{hist[-1]['energy_wh'] / 1000 * self.settings['price_per_kwh']:.2f}"
+            ex["program"] = programs.program_of(hist[-1], self.named_programs(cid)) or "nieznany"
+        typ = self.typical(cid)
+        if a.state == RUNNING and a.cycle_start is not None and typ:
+            ex["eta"] = datetime.fromtimestamp(a.cycle_start + typ, timezone.utc).isoformat()
+        return ex
 
     # -- MQTT publikacja
     def _pub(self, topic, payload):
@@ -221,11 +424,11 @@ class Monitor:
             self.published[topic] = payload
 
     def publish_discovery(self, a):
-        for topic, payload in discovery.discovery_messages(a):
+        for topic, payload in discovery.discovery_messages(a, self.settings["currency"]):
             self._pub(topic, payload)
 
     def publish_state(self, a, now):
-        for topic, payload in discovery.state_messages(a, now):
+        for topic, payload in discovery.state_messages(a, now, self.extra(a, now)):
             self._pub(topic, payload)
 
     def republish_all(self):
@@ -246,6 +449,7 @@ class Monitor:
             t0 = time.time()
             try:
                 await self.poll_once()
+                await self.housekeeping(time.time())
             except Exception:
                 log.exception("Błąd w pętli odczytu")
             await asyncio.sleep(max(1.0, POLL_S - (time.time() - t0)))
@@ -265,11 +469,18 @@ class Monitor:
                 changed = True
                 log.info("%s: %s", a.cfg["name"], kind)
                 if kind == "finish":
-                    h = self.history.setdefault(a.cfg["id"], [])
-                    h.append(entry_from_info(info))
+                    cid = a.cfg["id"]
+                    h = self.history.setdefault(cid, [])
+                    entry = entry_from_info(info)
+                    anomaly = programs.anomaly(entry, h)  # porównanie z poprzednimi cyklami, bez bieżącego
+                    if anomaly:
+                        entry["anomaly"] = anomaly
+                    h.append(entry)
                     del h[:-HISTORY_MAX]
                     self.save_history()
-                if kind in ("start", "finish"):
+                    info = {**info, "anomaly": anomaly,
+                            "program": programs.program_of(entry, self.named_programs(cid))}
+                if kind in ("start", "finish", "remind"):
                     asyncio.create_task(self.notify(a, kind, info))
             self.publish_state(a, now)
         # w trakcie cyklu zapisujemy stan co minutę, żeby restart nie zgubił energii i wykresu
@@ -285,7 +496,7 @@ class Monitor:
         samples = samples[::step]
         running = a.state == RUNNING and a.cycle_start is not None
         hist = self.history.get(c["id"], [])
-        recent = [h["duration_s"] for h in hist[-10:]]
+        last = hist[-1] if hist else None
         return {
             "id": c["id"], "cfg": c, "state": a.state, "power": a.power,
             "sensor_ok": a.sensor_ok(now),
@@ -293,7 +504,8 @@ class Monitor:
             "energy_wh": round(a.energy_wh, 1) if running else None,
             "finished_at": a.finished_at, "last_cycle": a.last_cycle,
             # typowy czas cyklu (mediana ostatnich) do szacowania końca
-            "typical_s": int(statistics.median(recent)) if len(recent) >= 3 else None,
+            "typical_s": self.typical(c["id"]),
+            "last_program": programs.program_of(last, self.named_programs(c["id"])) if last else None,
             "history_count": len(hist),
             "history": [{k: v for k, v in h.items() if k != "curve"} for h in hist[-5:][::-1]],
             "samples": [[int(t), round(p, 1)] for t, p in samples],
@@ -332,6 +544,12 @@ def clean_cfg(body):
         "notify_finish": bool(body.get("notify_finish", True)),
         "msg_start": str(body.get("msg_start") or DEFAULT_MSG_START)[:200],
         "msg_finish": str(body.get("msg_finish") or DEFAULT_MSG_FINISH)[:200],
+        "unload_button": bool(body.get("unload_button", True)),
+        "remind_every": int(num("remind_every", 0, 1440, p.get("remind_every", 0))),
+        "remind_max": int(num("remind_max", 1, 20, 3)),
+        "msg_remind": str(body.get("msg_remind") or DEFAULT_MSG_REMIND)[:200],
+        "quiet": bool(body.get("quiet", True)),
+        "notify_anomaly": bool(body.get("notify_anomaly", True)),
     }
     if cfg["stop_threshold"] > cfg["start_threshold"]:
         raise web.HTTPBadRequest(text="Próg końca nie może być wyższy niż próg startu.")
@@ -371,7 +589,40 @@ def get_appliance(request):
 async def api_history(request):
     mon = request.app["mon"]
     a = get_appliance(request)
-    return web.json_response(mon.history.get(a.cfg["id"], [])[::-1])
+    cid = a.cfg["id"]
+    named = mon.named_programs(cid)
+    entries = [{**e, "program": programs.program_of(e, named)} for e in mon.history.get(cid, [])[::-1]]
+    return web.json_response({"entries": entries, "programs": named})
+
+
+async def api_programs_put(request):
+    """Zapisuje nazwy programów nadane przez użytkownika (pusta nazwa = wróć do 'Program N')."""
+    mon = request.app["mon"]
+    a = get_appliance(request)
+    body = await request.json()
+    saved = []
+    for p in body.get("programs", []):
+        try:
+            d, e = int(p["duration_s"]), float(p["energy_wh"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        name = str(p.get("name") or "").strip()[:30]
+        if name:
+            saved.append({"name": name, "duration_s": d, "energy_wh": e})
+    cid = a.cfg["id"]
+    mon.programs[cid] = saved
+    mon.prog_ver += 1
+    save_json(DATA / "programs.json", mon.programs)
+    mon.publish_state(a, time.time())
+    return web.json_response({"programs": mon.named_programs(cid)})
+
+
+async def api_unload(request):
+    mon = request.app["mon"]
+    a = get_appliance(request)
+    if not mon.unload(a.cfg["id"], "panel"):
+        raise web.HTTPConflict(text="Urządzenie nie jest w stanie „Gotowe”.")
+    return web.Response(status=204)
 
 
 async def api_history_delete(request):
@@ -452,8 +703,30 @@ async def api_settings_put(request):
     except (TypeError, ValueError):
         raise web.HTTPBadRequest(text="Cena musi być liczbą.")
     cur = str(body.get("currency") or "zł").strip()[:8] or "zł"
-    mon.settings = {"price_per_kwh": round(price, 4), "currency": cur}
+
+    def hhmm(key, default):
+        v = str(body.get(key) or default)
+        if not TIME_RE.fullmatch(v):
+            raise web.HTTPBadRequest(text="Godzina musi mieć format GG:MM.")
+        return v
+
+    try:
+        wday = min(max(int(body.get("weekly_day", 6)), 0), 6)
+    except (TypeError, ValueError):
+        wday = 6
+    targets = [t for t in body.get("weekly_targets", []) if isinstance(t, str) and re.fullmatch(r"[a-z0-9_]+", t)]
+    new = {
+        "price_per_kwh": round(price, 4), "currency": cur,
+        "quiet_enabled": bool(body.get("quiet_enabled", True)),
+        "quiet_from": hhmm("quiet_from", "22:00"), "quiet_to": hhmm("quiet_to", "07:00"),
+        "weekly_enabled": bool(body.get("weekly_enabled", False)), "weekly_day": wday,
+        "weekly_time": hhmm("weekly_time", "18:00"), "weekly_targets": targets,
+    }
+    if mon.settings.get("weekly_last"):
+        new["weekly_last"] = mon.settings["weekly_last"]
+    mon.settings = new
     save_json(DATA / "settings.json", mon.settings)
+    mon.republish_all()  # zmiana waluty zmienia jednostkę czujnika kosztu
     return web.json_response(mon.settings)
 
 
@@ -487,6 +760,7 @@ async def api_options(request):
     return web.json_response({
         "sensors": sensors, "notify": notify, "presets": PRESETS,
         "default_msg_start": DEFAULT_MSG_START, "default_msg_finish": DEFAULT_MSG_FINISH,
+        "default_msg_remind": DEFAULT_MSG_REMIND,
     })
 
 
@@ -529,6 +803,8 @@ async def api_delete(request):
         raise web.HTTPNotFound()
     del mon.appliances[cid]
     mon.history.pop(cid, None)
+    if mon.programs.pop(cid, None) is not None:
+        save_json(DATA / "programs.json", mon.programs)
     mon.save_cfg()
     mon.save_runtime()
     mon.save_history()
@@ -568,6 +844,8 @@ async def make_app():
     app.router.add_get("/api/appliances/{id}/history", api_history)
     app.router.add_delete("/api/appliances/{id}/history/{start}", api_history_delete)
     app.router.add_post("/api/appliances/{id}/backfill", api_backfill)
+    app.router.add_put("/api/appliances/{id}/programs", api_programs_put)
+    app.router.add_post("/api/appliances/{id}/unload", api_unload)
     app.router.add_post("/api/replay", api_replay)
     app.router.add_get("/api/settings", api_settings_get)
     app.router.add_put("/api/settings", api_settings_put)
@@ -584,7 +862,9 @@ async def main():
     await web.TCPSite(runner, "0.0.0.0", PORT).start()
     log.info("Panel działa na porcie %s, urządzeń: %s", PORT, len(mon.appliances))
     await mon.mqtt.start()
+    await mon.load_tz()
     asyncio.create_task(mon.poll_loop())
+    asyncio.create_task(mon.ws_loop())
     await asyncio.Event().wait()
 
 

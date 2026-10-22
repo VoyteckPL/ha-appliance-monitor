@@ -112,7 +112,8 @@
   .cv .cursor { stroke:var(--text); opacity:.45; }
   .cyc-head { display:flex; gap:6px 16px; flex-wrap:wrap; align-items:baseline; margin-bottom:6px; }
   .cycles { max-height:250px; overflow:auto; border:1px solid var(--line); border-radius:12px; }
-  .crow { display:grid; grid-template-columns:1.6fr 1fr 1fr 1fr 30px; gap:6px; padding:8px 10px; border-bottom:1px solid var(--line); cursor:pointer; align-items:center; font-size:14px; }
+  .prow { display:grid; grid-template-columns:minmax(120px,200px) 1fr; gap:10px; align-items:center; margin-bottom:6px; }
+  .crow { display:grid; grid-template-columns:1.5fr 1.1fr 1fr .8fr .9fr 30px; gap:6px; padding:8px 10px; border-bottom:1px solid var(--line); cursor:pointer; align-items:center; font-size:14px; }
   .crow:last-child { border-bottom:none; }
   .crow.h { cursor:default; position:sticky; top:0; background:var(--card); }
   .crow:not(.h):hover { background:var(--bg); }
@@ -122,6 +123,8 @@
   details summary { cursor:pointer; color:var(--muted); margin-top:4px; }
   @media (max-width:520px) {
     .crow { font-size:12.5px; gap:4px; padding:8px; grid-template-columns:1.5fr 1.1fr 1fr .9fr 24px; }
+    .crow .pg { display:none; }
+    .prow { grid-template-columns:1fr; gap:2px; }
     .det { padding:14px; }
     .grid2 { grid-template-columns:1fr; }
   }
@@ -186,7 +189,16 @@
       <label>Treść przy starcie<input type="text" id="f_msg_start"></label>
       <label class="chk"><input type="checkbox" id="f_n_finish"> Powiadom o zakończeniu</label>
       <label>Treść przy zakończeniu<input type="text" id="f_msg_finish"></label>
-      <div class="hint">Możesz użyć: {name} {duration} {energy}</div>
+      <label class="chk"><input type="checkbox" id="f_unload"> Przycisk „Wyjęte” w powiadomieniu na telefonie</label>
+      <div class="grid2">
+        <label>Przypominaj co (min, 0 = wyłączone)<input type="number" id="f_remind" min="0" step="5"></label>
+        <label>Maks. liczba przypomnień<input type="number" id="f_remind_max" min="1" step="1"></label>
+      </div>
+      <label>Treść przypomnienia<input type="text" id="f_msg_remind"></label>
+      <div class="hint">Przypomnienia przychodzą, dopóki nie klikniesz „Wyjęte” (w powiadomieniu, w panelu albo w HA).</div>
+      <label class="chk"><input type="checkbox" id="f_anom"> Ostrzegaj o nietypowym cyklu</label>
+      <label class="chk"><input type="checkbox" id="f_quiet"> Cisza nocna (godziny ustawisz w ⚙)</label>
+      <div class="hint">W treści możesz użyć: {name} {duration} {energy} {cost} {program} {ago}</div>
       <div><button type="button" id="f_test">Wyślij testowe powiadomienie</button></div>
     </fieldset>
 
@@ -218,7 +230,19 @@
       <label>Cena prądu za kWh<input type="number" id="s_price" step="0.01" min="0"></label>
       <label>Waluta<input type="text" id="s_cur" maxlength="8"></label>
     </div>
-    <div class="hint">Służy do wyliczania kosztu cykli w widoku Szczegóły.</div>
+    <div class="hint">Stała cena do wyliczania kosztu cykli w widoku Szczegóły.</div>
+    <fieldset>
+      <legend>Cisza nocna</legend>
+      <label class="chk"><input type="checkbox" id="s_quiet"> Wstrzymuj powiadomienia w nocy</label>
+      <div class="grid2"><label>Od<input type="time" id="s_qfrom"></label><label>Do<input type="time" id="s_qto"></label></div>
+      <div class="hint" style="margin-top:0">Zakończenia cykli z nocy przyjdą po jej końcu jako jedno zbiorcze powiadomienie. Starty i przypomnienia z nocy są pomijane. Dla wybranego urządzenia możesz to wyłączyć w jego ustawieniach.</div>
+    </fieldset>
+    <fieldset>
+      <legend>Podsumowanie tygodnia</legend>
+      <label class="chk"><input type="checkbox" id="s_weekly"> Wysyłaj podsumowanie raz w tygodniu</label>
+      <div class="grid2"><label>Dzień<select id="s_wday"></select></label><label>Godzina<input type="time" id="s_wtime"></label></div>
+      <div id="s_wtargets"></div>
+    </fieldset>
     <div id="s_err" class="small" style="color:var(--danger)"></div>
     <div class="actions">
       <button type="button" id="s_cancel">Anuluj</button>
@@ -281,7 +305,8 @@ function card(a) {
   if (a.state === 'running') {
     stats += `<div>Trwa<br><b>${fmtDur(a.elapsed_s || 0)}</b></div><div>Zużycie<br><b>${((a.energy_wh||0)/1000).toFixed(2)} kWh</b></div>`;
   } else if (a.last_cycle) {
-    stats += `<div>Ostatni cykl<br><b>${fmtDur(a.last_cycle.duration_s)}</b></div><div>Zużycie<br><b>${(a.last_cycle.energy_wh/1000).toFixed(2)} kWh</b></div>`;
+    stats += `<div>Ostatni cykl<br><b>${fmtDur(a.last_cycle.duration_s)}</b></div><div>Zużycie<br><b>${(a.last_cycle.energy_wh/1000).toFixed(2)} kWh</b></div>`
+      + (a.last_program ? `<div>Program<br><b>${esc(a.last_program)}</b></div>` : '');
   }
   let sub = '';
   if (a.state === 'finished' && a.finished_at) sub = `<div class="small muted">Zakończono ${fmtAgo(a.finished_at)}</div>`;
@@ -297,6 +322,7 @@ function card(a) {
   return `<div class="card ${a.state}">
     <div class="row"><span class="title">${icon(c.preset)}<span class="name">${esc(c.name)}</span></span>
       <span><span class="badge ${a.state}">${LABEL[a.state]}</span>
+        ${a.state === 'finished' ? `<button class="primary" data-unl="${esc(a.id)}">Wyjęte</button>` : ''}
         <button data-det="${esc(a.id)}">Szczegóły</button> <button data-edit="${esc(a.id)}">Ustawienia</button></span></div>
     <div class="stats">${stats}</div>${sub}${warn}${chart(a)}${hist}</div>`;
 }
@@ -311,6 +337,9 @@ function render() {
   list.innerHTML = html;
   list.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => openForm(b.dataset.edit));
   list.querySelectorAll('[data-det]').forEach(b => b.onclick = () => openDetails(b.dataset.det));
+  list.querySelectorAll('[data-unl]').forEach(b => b.onclick = async () => {
+    try { await api(`api/appliances/${b.dataset.unl}/unload`, 'POST'); refresh(); } catch (e) { alert(e.message); }
+  });
   const a2 = $('#add2'); if (a2) a2.onclick = () => openForm(null);
 }
 
@@ -325,7 +354,7 @@ const bodyW = () => Math.max(300, Math.floor($('#d_body').clientWidth || 600));
 async function openDetails(id) {
   const a = state.appliances.find(x => x.id === id);
   if (!a) return;
-  det = {id, entries:[], sel:null};
+  det = {id, entries:[], programs:[], sel:null};
   $('#d_title').textContent = a.cfg.name;
   $('#d_icon').className = a.state;
   $('#d_icon').innerHTML = icon(a.cfg.preset);
@@ -335,7 +364,7 @@ async function openDetails(id) {
 }
 
 async function loadDetails() {
-  try { det.entries = await api(`api/appliances/${det.id}/history`); }
+  try { const r = await api(`api/appliances/${det.id}/history`); det.entries = r.entries; det.programs = r.programs; }
   catch (e) { $('#d_body').innerHTML = `<div class="banner">${esc(e.message)}</div>`; return; }
   if (!det.entries.some(e => e.start === det.sel)) det.sel = det.entries.length ? det.entries[0].start : null;
   renderDetails();
@@ -358,6 +387,7 @@ function renderDetails() {
       <div class="tile"><span class="muted small">Średnio na cykl</span><b>${win.length ? kwh(wh / win.length) + ' kWh' : '—'}</b></div></div>
       <div class="hint">Koszt wg ceny ${esc(S.price_per_kwh)} ${esc(S.currency)}/kWh. Zmienisz ją w ⚙ na górze strony.</div>
       <div><div class="sec">Energia dziennie (14 dni)</div>${dayBars(E)}</div>
+      ${programsSection()}
       <div><div class="sec">Wykres mocy cyklu</div><div id="d_chart"></div></div>
       <div><div class="sec">Cykle (kliknij, żeby zobaczyć wykres)</div>${cycleList(E)}</div>`;
   }
@@ -365,7 +395,25 @@ function renderDetails() {
     <button id="d_backfill">Wczytaj historię z HA (14 dni)</button></div>`;
   $('#d_body').innerHTML = html;
   if (E.length) { drawChart(); bindList(); }
+  document.querySelectorAll('#d_body [data-pi]').forEach(i => i.onchange = saveProgramNames);
   $('#d_backfill').onclick = backfill;
+}
+
+function programsSection() {
+  if (!det.programs.length) return '';
+  return `<div><div class="sec">Programy (rozpoznane automatycznie)</div>` + det.programs.map((p, i) =>
+    `<div class="prow"><input type="text" data-pi="${i}" maxlength="30" value="${esc(p.custom ? p.name : '')}" placeholder="${esc(p.name)}">
+      <span class="muted small">${p.count}× · typowo ${fmtDur(p.duration_s)}, ${kwh(p.energy_wh)} kWh, ${money(p.energy_wh)}</span></div>`).join('')
+    + `<div class="hint">Wpisz własną nazwę (np. Eko). Będzie widoczna na liście i w powiadomieniach jako {program}.</div></div>`;
+}
+
+async function saveProgramNames() {
+  const names = [...document.querySelectorAll('#d_body [data-pi]')].map(i => i.value.trim());
+  try {
+    await api(`api/appliances/${det.id}/programs`, 'PUT',
+      {programs: det.programs.map((p, i) => ({duration_s: p.duration_s, energy_wh: p.energy_wh, name: names[i]}))});
+    await loadDetails();
+  } catch (e) { alert(e.message); }
 }
 
 function dayBars(E) {
@@ -386,8 +434,8 @@ function dayBars(E) {
 }
 
 function cycleList(E) {
-  return `<div class="cycles"><div class="crow h muted small"><span>Start</span><span>Czas</span><span>kWh</span><span>Koszt</span><span></span></div>` +
-    E.map(e => `<div class="crow ${e.start === det.sel ? 'sel' : ''}" data-s="${e.start}"><span>${fmtTime(e.start)}</span><span>${fmtDur(e.duration_s)}</span><span>${kwh(e.energy_wh)}</span><span>${money(e.energy_wh)}</span><button class="x" data-del="${e.start}" title="Usuń z historii" aria-label="Usuń z historii">✕</button></div>`).join('') + '</div>';
+  return `<div class="cycles"><div class="crow h muted small"><span>Start</span><span class="pg">Program</span><span>Czas</span><span>kWh</span><span>Koszt</span><span></span></div>` +
+    E.map(e => `<div class="crow ${e.start === det.sel ? 'sel' : ''}" data-s="${e.start}"><span>${e.anomaly ? `<span title="${esc(e.anomaly)}">⚠ </span>` : ''}${fmtTime(e.start)}</span><span class="pg muted">${esc(e.program || '')}</span><span>${fmtDur(e.duration_s)}</span><span>${kwh(e.energy_wh)}</span><span>${money(e.energy_wh)}</span><button class="x" data-del="${e.start}" title="Usuń z historii" aria-label="Usuń z historii">✕</button></div>`).join('') + '</div>';
 }
 
 function bindList() {
@@ -408,8 +456,12 @@ function drawChart() {
   const box = $('#d_chart'), e = det.entries.find(x => x.start === det.sel);
   if (!box) return;
   if (!e) { box.innerHTML = ''; return; }
-  const head = `<div class="cyc-head"><b>${fmtTime(e.start)}</b><span>${fmtDur(e.duration_s)}</span><span>${kwh(e.energy_wh)} kWh</span><span>${money(e.energy_wh)}</span>
-    <span class="muted">${e.peak_w ? 'szczyt ' + e.peak_w + ' W' : ''}</span><span id="c_hover" class="muted small"></span></div>`;
+  const prev = e.program ? det.entries.find(x => x.program === e.program && x.start < e.start) : null;  // wpisy są od najnowszych
+  const sg = v => (v >= 0 ? '+' : '−');
+  const cmp = prev ? `<div class="small muted">W porównaniu z poprzednim „${esc(e.program)}”: ${sg(e.energy_wh - prev.energy_wh)}${(Math.abs(e.energy_wh - prev.energy_wh) / 1000).toFixed(2)} kWh, ${sg(e.duration_s - prev.duration_s)}${fmtDur(Math.abs(e.duration_s - prev.duration_s))}</div>` : '';
+  const head = `<div class="cyc-head"><b>${fmtTime(e.start)}</b>${e.program ? `<span class="badge">${esc(e.program)}</span>` : ''}<span>${fmtDur(e.duration_s)}</span><span>${kwh(e.energy_wh)} kWh</span><span>${money(e.energy_wh)}</span>
+    <span class="muted">${e.peak_w ? 'szczyt ' + e.peak_w + ' W' : ''}</span><span id="c_hover" class="muted small"></span></div>`
+    + (e.anomaly ? `<div class="small" style="color:var(--done);margin-bottom:4px">⚠ ${esc(e.anomaly)}</div>` : '') + cmp;
   const c = e.curve;
   if (!c || !c.w || c.w.length < 2) {
     box.innerHTML = head + '<div class="muted small">Brak wykresu dla tego cyklu (zapisany przez wcześniejszą wersję). Przycisk „Wczytaj historię z HA" uzupełni go, jeśli cykl mieści się w ostatnich dniach.</div>';
@@ -464,14 +516,27 @@ $('#d_close').onclick = () => $('#det').close();
 window.addEventListener('resize', () => { if ($('#det').open && det.entries.length) { renderDetails(); } });
 
 // ---------- ustawienia ogólne ----------
-$('#gear').onclick = () => {
-  $('#s_price').value = state.settings.price_per_kwh; $('#s_cur').value = state.settings.currency;
+$('#s_wday').innerHTML = ['Poniedziałek','Wtorek','Środa','Czwartek','Piątek','Sobota','Niedziela'].map((d, i) => `<option value="${i}">${d}</option>`).join('');
+$('#gear').onclick = async () => {
+  const S = state.settings;
+  $('#s_price').value = S.price_per_kwh; $('#s_cur').value = S.currency;
+  $('#s_quiet').checked = S.quiet_enabled !== false; $('#s_qfrom').value = S.quiet_from || '22:00'; $('#s_qto').value = S.quiet_to || '07:00';
+  $('#s_weekly').checked = !!S.weekly_enabled; $('#s_wday').value = S.weekly_day ?? 6; $('#s_wtime').value = S.weekly_time || '18:00';
+  let notify = [];
+  try { notify = (await api('api/options')).notify; } catch (e) { /* bez listy usług */ }
+  $('#s_wtargets').innerHTML = notify.length ? notify.map(n =>
+    `<label class="chk"><input type="checkbox" value="${esc(n.service)}" ${(S.weekly_targets || []).includes(n.service) ? 'checked' : ''}> ${esc(n.label)}</label>`).join('')
+    : '<div class="muted small">Nie znaleziono usług powiadomień.</div>';
   $('#s_err').textContent = ''; $('#sdlg').showModal();
 };
 $('#s_cancel').onclick = () => $('#sdlg').close();
 $('#s_save').onclick = async () => {
   try {
-    state.settings = await api('api/settings', 'PUT', {price_per_kwh: +$('#s_price').value, currency: $('#s_cur').value});
+    state.settings = await api('api/settings', 'PUT', {
+      price_per_kwh: +$('#s_price').value, currency: $('#s_cur').value,
+      quiet_enabled: $('#s_quiet').checked, quiet_from: $('#s_qfrom').value, quiet_to: $('#s_qto').value,
+      weekly_enabled: $('#s_weekly').checked, weekly_day: +$('#s_wday').value, weekly_time: $('#s_wtime').value,
+      weekly_targets: [...document.querySelectorAll('#s_wtargets input:checked')].map(i => i.value)});
     $('#sdlg').close(); if ($('#det').open && det.entries.length) renderDetails(); refresh();
   } catch (e) { $('#s_err').textContent = e.message; }
 };
@@ -482,6 +547,7 @@ function fillPreset(key, keepName) {
   $('#f_start_th').value = p.start_threshold; $('#f_start_delay').value = p.start_delay;
   $('#f_stop_th').value = p.stop_threshold; $('#f_stop_delay').value = +(p.stop_delay / 60).toFixed(2);
   $('#f_min_dur').value = Math.round(p.min_duration / 60); $('#f_reset').value = p.reset_after;
+  $('#f_remind').value = p.remind_every ?? 0;
   if (!keepName && !$('#f_name').value) $('#f_name').value = p.label;
 }
 
@@ -507,10 +573,15 @@ async function openForm(id) {
     $('#f_min_dur').value = Math.round(c.min_duration / 60); $('#f_reset').value = c.reset_after;
     $('#f_n_start').checked = c.notify_start; $('#f_n_finish').checked = c.notify_finish;
     $('#f_msg_start').value = c.msg_start; $('#f_msg_finish').value = c.msg_finish;
+    $('#f_unload').checked = c.unload_button !== false; $('#f_remind').value = c.remind_every ?? 0;
+    $('#f_remind_max').value = c.remind_max ?? 3; $('#f_msg_remind').value = c.msg_remind || options.default_msg_remind;
+    $('#f_anom').checked = c.notify_anomaly !== false; $('#f_quiet').checked = c.quiet !== false;
   } else {
     $('#f_preset').value = 'washer'; $('#f_name').value = ''; fillPreset('washer');
     $('#f_n_start').checked = false; $('#f_n_finish').checked = true;
     $('#f_msg_start').value = options.default_msg_start; $('#f_msg_finish').value = options.default_msg_finish;
+    $('#f_unload').checked = true; $('#f_remind_max').value = 3; $('#f_msg_remind').value = options.default_msg_remind;
+    $('#f_anom').checked = true; $('#f_quiet').checked = true;
   }
   setFormIcon();
   $('#dlg').showModal();
@@ -525,6 +596,8 @@ function readForm() {
     notify_targets: [...document.querySelectorAll('#f_targets input:checked')].map(i => i.value),
     notify_start: $('#f_n_start').checked, notify_finish: $('#f_n_finish').checked,
     msg_start: $('#f_msg_start').value, msg_finish: $('#f_msg_finish').value,
+    unload_button: $('#f_unload').checked, remind_every: +$('#f_remind').value, remind_max: +$('#f_remind_max').value,
+    msg_remind: $('#f_msg_remind').value, notify_anomaly: $('#f_anom').checked, quiet: $('#f_quiet').checked,
   };
 }
 
