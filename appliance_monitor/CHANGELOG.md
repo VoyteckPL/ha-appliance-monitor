@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.16.0
+- Osobna zakładka „🏦 Kredyt”: wykres salda kredytu (harmonogram z banku i Twój scenariusz), ile spłacone i ile zostało, symulator szybszej spłaty (stała miesięczna kwota, jednorazowa nadpłata, oprocentowanie) z datą końca, oszczędnością i łącznym kosztem. Harmonogram PDF wgrywasz tam lub w Statystykach.
+
 ## 0.15.0
 - Kredyt na fotowoltaikę: wgraj harmonogram spłat z banku (PDF, nazwa z „harmonogram” lub „kredyt”) tym samym przyciskiem co faktury. Karta fotowoltaiki pokazuje, ile już wydałeś (wkład własny + spłacone raty), ile panele dały, ile brakuje do zwrotu, całkowity koszt z odsetkami i opłatami oraz zwrot przy obecnym tempie.
 

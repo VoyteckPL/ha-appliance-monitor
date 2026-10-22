@@ -144,11 +144,15 @@
   <h1><svg class="logo" viewBox="0 0 64 64" aria-hidden="true"><defs><linearGradient id="lg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#182669"/><stop offset="1" stop-color="#08aabe"/></linearGradient></defs><rect width="64" height="64" rx="15" fill="url(#lg)"/><rect x="13" y="8" width="38" height="46" rx="6" fill="#eef3fa"/><line x1="13" y1="20" x2="51" y2="20" stroke="#b0c0d6" stroke-width="1"/><circle cx="32" cy="38" r="13.5" fill="#8a9bb8"/><circle cx="32" cy="38" r="11.5" fill="#1e90e8"/><polyline points="21,39 27,39 29,34 32,43 35,30 38,40 40,39 43,39" fill="none" stroke="#fff" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/></svg>Urządzenia</h1>
   <div class="hbtns">
     <button id="statsbtn" title="Statystyki i rachunki za prąd">📊 Statystyki</button>
+    <button id="loanbtn" title="Kredyt na fotowoltaikę">🏦 Kredyt</button>
     <button id="gear" title="Ustawienia ogólne (cena prądu)" aria-label="Ustawienia ogólne">⚙</button>
     <button class="primary" id="add">+ Dodaj</button>
   </div>
 </header>
 <main id="list"></main>
+<main id="loanview" hidden>
+  <div id="ln_body"></div>
+</main>
 <main id="stats" hidden>
   <div class="card" id="st_bar">
     <div class="grid2">
@@ -791,6 +795,64 @@ function pvExtras(ms) {
     ${pvBox('accent', '🏆', `Najlepszy miesiąc: <b>${monthName(best.month)}</b> (${zl(best.benefit)}, ${pl(best.production)} kWh). Najsłabszy: <b>${monthName(worst.month)}</b> (${zl(worst.benefit)}).`)}
     ${drops.length ? pvBox('done', '⚠️', `Produkcja wyraźnie niższa niż rok wcześniej: ${drops.map(d => `<b>${monthName(d.m)}</b> (${Math.round(d.v * 100)}%)`).join(', ')}. Jeśli to nie pogoda, sprawdź zacienienie lub zabrudzenie paneli.`) : ''}`;
 }
+function loanSim(bal, r, pay, fee, lump) {
+  // bal: saldo po ostatniej zapłaconej racie; r: roczne oprocentowanie (ułamek); zwraca saldo po każdej racie
+  const out = [], mr = r / 12; let b = Math.max(bal - lump, 0), tot = lump, interest = 0, fees = 0;
+  if (pay - fee - b * mr <= 0.005 && b > 0) return null;  // rata nie pokrywa odsetek
+  for (let n = 0; b > 0.005 && n < 600; n++) {
+    const i = b * mr, pr = Math.min(pay - fee - i, b);
+    tot += pr + i + fee; interest += i; fees += fee; b -= pr; out.push(b);
+  }
+  return {bal: out, n: out.length, total: tot, interest, fees};
+}
+const addMonths = (d, k) => { const y = +d.slice(0, 4), m = +d.slice(5, 7) - 1 + k, yy = y + Math.floor(m / 12), mm = (m % 12 + 12) % 12; return yy + '-' + String(mm + 1).padStart(2, '0'); };
+let loanState = null, loanCfg = null;
+function loanCard(D) {
+  const L = D.loan, S = D.summary;
+  const left = L.rows.filter(r => r[0] > D.today), fee0 = left.length ? left[0][3] : 0;
+  const start = left.length ? left[0][0].slice(0, 7) : null;
+  if (!start) return statCard('Kredyt na fotowoltaikę', '<div class="banner">Kredyt jest już spłacony. 🎉</div>');
+  loanState = {D, left, start, fee0, rate: 9};
+  if (!loanCfg) loanCfg = {pay: Math.round(S.next_amount * 100) / 100, lump: 0, rate: 9};
+  return statCard('Kredyt na fotowoltaikę: symulator spłaty', `
+    <div id="ln_sum"></div>
+    <div class="grid2"><label>Płacę miesięcznie łącznie (zł)<input type="number" id="ln_pay" min="0" step="10" value="${loanCfg.pay}"></label>
+      <label>Jednorazowa nadpłata teraz (zł)<input type="number" id="ln_lump" min="0" step="100" value="${loanCfg.lump}"></label></div>
+    <div class="grid2"><label>Oprocentowanie (%)<input type="number" id="ln_rate" min="0" max="30" step="0.1" value="${loanCfg.rate}"></label>
+      <div style="display:flex;gap:6px;align-items:end;flex-wrap:wrap"><button data-lp="${S.next_amount}">Jak teraz</button><button data-lp="500">500</button><button data-lp="600">600</button><button data-lp="700">700</button></div></div>
+    <div id="ln_res"></div><div id="ln_chart"></div>`);
+}
+function loanRender() {
+  const {D, left, start, fee0} = loanState, S = D.summary, C = state.settings.currency;
+  const pay = +$('#ln_pay').value || 0, lump = +$('#ln_lump').value || 0, rate = (+$('#ln_rate').value || 0) / 100;
+  loanCfg = {pay, lump, rate: rate * 100};
+  const f = v => zl(v), mon = n => monthName(addMonths(start, n - 1));
+  const base = {n: left.length, total: S.left_total, bal: left.map(r => r[5]), interest: S.left_interest, fees: S.left_fees};
+  const sim = (pay === S.next_amount && !lump && Math.abs(rate - 0.09) < 1e-9) ? base : loanSim(S.balance, rate, pay, fee0, lump);
+  $('#ln_sum').innerHTML = pvBox('accent', '🏦', `Spłacone <b>${S.paid_n}</b> rat z ${S.count} (${f(S.paid_total)}). Do spłaty kapitału <b>${f(S.balance)}</b>, następna rata ${f(S.next_amount)} ${esc(S.next)}. <b>Cały kredyt kosztuje ${f(S.total)}</b> (pożyczone ${f(S.amount)}, koszt ${f(S.cost)}).`);
+  if (!sim) { $('#ln_res').innerHTML = `<div class="banner">Przy takiej racie nie pokrywasz odsetek i opłat (min. ${f(fee0 + S.balance * rate / 12)}).</div>`; $('#ln_chart').innerHTML = ''; return; }
+  const saveL = base.total - sim.total, mm = base.n - sim.n;
+  const maxTot = S.paid_total + sim.total;
+  $('#ln_res').innerHTML = (sim === base ? '' :
+    pvBox(saveL > 0 ? 'run' : 'done', saveL > 0 ? '💰' : '⚠️', `Spłacisz kredyt w <b>${mon(sim.n)}</b> (${sim.n} rat, o <b>${mm > 0 ? mm : 0}</b> mies. wcześniej niż w harmonogramie: ${mon(base.n)}). Do końca zapłacisz <b>${f(sim.total)}</b> zamiast ${f(base.total)}: oszczędzasz <b>${f(saveL)}</b>.`)) +
+    pvBox('accent', '📊', `Łącznie za cały kredyt zapłacisz <b>${f(maxTot)}</b> (z tego odsetki ${f(S.paid_interest + sim.interest)}, opłaty ${f(S.paid_fees + sim.fees)}). Maksymalnie, bez nadpłat: ${f(S.total)}.`) +
+    `<div class="small muted">Wypłata całości dziś: ok. <b>${f(S.balance + S.balance * 0.09 * Math.max((new Date(D.today) - new Date(S.last_paid_date || D.today)) / 86400000, 0) / 365)}</b> (saldo + odsetki od ostatniej raty). Dokładną kwotę poda bank; mogą wrócić części opłat.</div>`;
+  // wykres salda: harmonogram (szary) i symulacja (zielony)
+  const N = Math.max(base.n, sim.n) + 1, labels = Array.from({length: N}, (_, i) => { const m = addMonths(start, i - 1); return i % 12 === 0 ? MON[+m.slice(5) - 1] + " '" + m.slice(2, 4) : ''; });
+  const max = niceMax(S.balance * 1.05);
+  const pts = (b, x0, y0, iw, ih, slot) => [S.balance, ...b].map((v, i) => [x0 + slot * (i + .5), y0 + ih * (1 - v / max)]);
+  const poly = (p, c, w) => `<polyline fill="none" stroke="${c}" stroke-width="${w}" points="${p.map(q => q[0].toFixed(1) + ',' + q[1].toFixed(1)).join(' ')}"/>`;
+  const dots = (b, c, name, x0, y0, iw, ih, slot) => pts(b, x0, y0, iw, ih, slot).map((q, i) => i % 6 ? '' : `<circle cx="${q[0].toFixed(1)}" cy="${q[1].toFixed(1)}" r="3" fill="${c}"><title>${i ? monthName(addMonths(start, i - 1)) : 'teraz'} · ${name}: ${f(i ? b[i - 1] : S.balance)}</title></circle>`).join('');
+  $('#ln_chart').innerHTML = `<div class="sec">Ile zostało do spłaty (saldo kapitału)</div>` + legend([['var(--muted)', 'harmonogram z banku'], ['var(--run)', 'Twój scenariusz']]) +
+    chartFrame(labels, max, (x0, y0, iw, ih, slot) => poly(pts(base.bal, x0, y0, iw, ih, slot), 'var(--muted)', 2) + (sim === base ? '' : poly(pts(sim.bal, x0, y0, iw, ih, slot), 'var(--run)', 2.5)) +
+      dots(base.bal, 'var(--muted)', 'harmonogram', x0, y0, iw, ih, slot) + (sim === base ? '' : dots(sim.bal, 'var(--run)', 'scenariusz', x0, y0, iw, ih, slot)));
+}
+function loanWire() {
+  if (!loanState) return;
+  ['#ln_pay', '#ln_lump', '#ln_rate'].forEach(id => { const el = $(id); if (el) el.oninput = loanRender; });
+  document.querySelectorAll('[data-lp]').forEach(b => b.onclick = () => { $('#ln_pay').value = b.dataset.lp; loanRender(); });
+  loanRender();
+}
 function loanBox(L, benefit, cost, perYear) {
   if (!L) return '';
   const own = Math.max(cost - L.amount, 0), spent = own + L.paid_total, total = own + L.total, net = benefit - spent;
@@ -1001,15 +1063,35 @@ async function renderStats() {
 }
 $('#st_period').onchange = () => { state.statsPeriod = $('#st_period').value; try { localStorage.setItem('am_period', state.statsPeriod); } catch (e) { /* bez zapamiętania */ } renderStats(); };
 try { state.statsPeriod = localStorage.getItem('am_period') || 'all'; } catch (e) { state.statsPeriod = 'all'; }
+async function renderLoan() {
+  const D = await api('api/loan');
+  if (!D.loan) {
+    $('#ln_body').innerHTML = statCard('Kredyt na fotowoltaikę', `<div class="banner">Wgraj harmonogram spłat z banku (PDF), a pokażę wykres kredytu, ile już spłaciłeś i symulator szybszej spłaty.</div>
+      <label>Harmonogram spłat (PDF)<input type="file" id="l_file" accept="application/pdf"></label><div id="l_msg" class="small"></div>`);
+    $('#l_file').onchange = async () => {
+      const f = $('#l_file').files[0]; if (!f) return;
+      const r = await fetch('api/loan', {method: 'POST', headers: {'Content-Type': 'application/pdf'}, body: await f.arrayBuffer()});
+      if (!r.ok) { $('#l_msg').textContent = '✖ ' + await r.text(); return; }
+      renderLoan();
+    };
+    return;
+  }
+  $('#ln_body').innerHTML = loanCard(D) + `<div class="card"><a href="#" id="loan_del2">Usuń harmonogram</a> <span class="small muted">· nowy harmonogram wgrasz w Statystykach lub po usunięciu tutaj</span></div>`;
+  $('#loan_del2').onclick = async e => { e.preventDefault(); if (confirm('Usunąć wgrany harmonogram kredytu?')) { await api('api/loan', 'DELETE'); loanState = null; renderLoan(); } };
+  loanWire();
+}
 function showView(v) {
-  const st = v === 'stats';
-  $('#list').hidden = st; $('#stats').hidden = !st; if (!st) { $('#st_pick').hidden = true; $('#st_tip').hidden = true; } $('#add').hidden = st;
-  $('#statsbtn').textContent = st ? '← Urządzenia' : '📊 Statystyki';
-  document.querySelector('h1').lastChild.textContent = st ? 'Statystyki prądu' : 'Urządzenia';
+  const st = v === 'stats', ln = v === 'loan';
+  $('#list').hidden = st || ln; $('#stats').hidden = !st; $('#loanview').hidden = !ln;
+  if (!st) { $('#st_pick').hidden = true; $('#st_tip').hidden = true; } $('#add').hidden = st || ln;
+  $('#statsbtn').textContent = st ? '← Urządzenia' : '📊 Statystyki'; $('#loanbtn').textContent = ln ? '← Urządzenia' : '🏦 Kredyt';
+  document.querySelector('h1').lastChild.textContent = st ? 'Statystyki prądu' : ln ? 'Kredyt' : 'Urządzenia';
   if (st) renderStats().catch(e => { $('#st_body').innerHTML = `<div class="banner">${esc(e.message)}</div>`; });
-  try { history.replaceState(null, '', st ? '#stats' : location.pathname + location.search); } catch (e) { /* ignorujemy */ }
+  if (ln) renderLoan().catch(e => { $('#ln_body').innerHTML = `<div class="banner">${esc(e.message)}</div>`; });
+  try { history.replaceState(null, '', st ? '#stats' : ln ? '#loan' : location.pathname + location.search); } catch (e) { /* ignorujemy */ }
 }
 $('#statsbtn').onclick = () => showView($('#stats').hidden ? 'stats' : 'list');
+$('#loanbtn').onclick = () => showView($('#loanview').hidden ? 'loan' : 'list');
 $('#b_file').onchange = async () => {
   const files = [...$('#b_file').files], ok = [], corr = [], bad = [];
   let csvMsg = '';
@@ -1188,7 +1270,7 @@ $('#f_replay').onclick = async () => {
 };
 
 refresh();
-if (location.hash === '#stats') showView('stats');
+if (location.hash === '#stats') showView('stats'); else if (location.hash === '#loan') showView('loan');
 setInterval(refresh, 5000);
 </script>
 </body>

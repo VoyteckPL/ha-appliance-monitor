@@ -31,6 +31,6 @@ def summary(loan, today):
     return {"amount": loan["amount"], "count": len(rows), "paid_n": len(paid),
             "paid_principal": s(paid, 1), "paid_interest": s(paid, 2), "paid_fees": s(paid, 3), "paid_total": s(paid, 4),
             "left_total": s(left, 4), "left_interest": s(left, 2), "left_fees": s(left, 3),
-            "balance": paid[-1][5] if paid else loan["amount"], "total": s(rows, 4),
+            "balance": paid[-1][5] if paid else loan["amount"], "last_paid_date": paid[-1][0] if paid else None, "total": s(rows, 4),
             "cost": round(s(rows, 2) + s(rows, 3), 2), "next": left[0][0] if left else None,
             "next_amount": left[0][4] if left else 0.0, "last": rows[-1][0]}

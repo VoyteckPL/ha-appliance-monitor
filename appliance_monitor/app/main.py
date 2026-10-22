@@ -855,6 +855,14 @@ async def api_loan_post(request):
     return web.json_response({"installments": len(mon.loan["rows"]), "amount": mon.loan["amount"]})
 
 
+async def api_loan_get(request):
+    mon = request.app["mon"]
+    if not mon.loan:
+        return web.json_response({"loan": None})
+    today = datetime.now(ZoneInfo(mon.settings.get("timezone") or "Europe/Warsaw")).strftime("%Y-%m-%d")
+    return web.json_response({"loan": mon.loan, "summary": loanlib.summary(mon.loan, today), "today": today})
+
+
 async def api_loan_delete(request):
     mon = request.app["mon"]
     mon.loan = None
@@ -1124,6 +1132,7 @@ async def make_app():
     app.router.add_post("/api/bills", api_bills_post)
     app.router.add_post("/api/bills/csv", api_bills_csv)
     app.router.add_post("/api/pv/production", api_pv_production)
+    app.router.add_get("/api/loan", api_loan_get)
     app.router.add_post("/api/loan", api_loan_post)
     app.router.add_delete("/api/loan", api_loan_delete)
     app.router.add_delete("/api/bills/{month}", api_bills_delete)
