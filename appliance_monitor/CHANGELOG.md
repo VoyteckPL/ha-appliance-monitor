@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.6.1
+- Rachunki: wykresy (ile płacisz miesięcznie z podziałem na depozyt, pobór i oddawanie, ceny za kWh) oraz podsumowanie roczne.
+
 ## 0.6.0
 - Zakładka „Rachunki” (🧾): wgrywasz PDF faktury Energa, a dodatek odczytuje pobraną i oddaną energię, ceny, depozyt i kwotę do zapłaty. Bez ręcznego wpisywania.
 - Przy trybie „Z fotowoltaiką” ceny zakupu i oddanej kWh aktualizują się same z najnowszej faktury.

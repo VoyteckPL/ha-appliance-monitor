@@ -547,6 +547,61 @@ $('#s_mode').onchange = showMode;
 const zl = v => (+v).toFixed(2).replace('.', ',') + ' ' + state.settings.currency;
 const MON = ['sty','lut','mar','kwi','maj','cze','lip','sie','wrz','paź','lis','gru'];
 const monthName = m => MON[+m.slice(5) - 1] + ' ' + m.slice(0, 4);
+const CW = 640, CH = 170, PL = 38, PB = 22, PT = 14;
+function niceMax(v) { const p = Math.pow(10, Math.floor(Math.log10(v || 1))); for (const m of [1, 2, 2.5, 5, 10]) if (v <= m * p) return m * p; return 10 * p; }
+function chartFrame(labels, max, body) {
+  const iw = CW - PL - 6, ih = CH - PT - PB;
+  const grid = [0, .5, 1].map(f => { const y = PT + ih * (1 - f);
+    return `<line x1="${PL}" x2="${CW - 6}" y1="${y}" y2="${y}" stroke="var(--line)"/><text x="${PL - 5}" y="${y + 4}" text-anchor="end" fill="var(--muted)" font-size="10">${Math.round(max * f * 100) / 100}</text>`; }).join('');
+  const slot = iw / labels.length;
+  const xl = labels.map((l, i) => `<text x="${PL + slot * (i + .5)}" y="${CH - 6}" text-anchor="middle" fill="var(--muted)" font-size="10">${esc(l)}</text>`).join('');
+  return `<svg viewBox="0 0 ${CW} ${CH}" style="width:100%;height:auto;display:block" role="img">${grid}${xl}${body(PL, PT, iw, ih, slot)}</svg>`;
+}
+function barChart(bs, series, stacked) {
+  const labels = bs.map(b => MON[+b.month.slice(5) - 1]);
+  const tot = bs.map(b => stacked ? series.reduce((t, s) => t + s.f(b), 0) : Math.max(...series.map(s => s.f(b))));
+  const max = niceMax(Math.max(...tot));
+  return chartFrame(labels, max, (x0, y0, iw, ih, slot) => bs.map((b, i) => {
+    const n = stacked ? 1 : series.length, bw = Math.min(30, slot * .72 / n);
+    let acc = 0;
+    return series.map((s, k) => {
+      const v = s.f(b), h = v / max * ih;
+      const x = x0 + slot * (i + .5) - (n * bw) / 2 + (stacked ? 0 : k * bw);
+      const y = y0 + ih - h - (stacked ? acc / max * ih : 0); acc += v;
+      return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(h, 0).toFixed(1)}" rx="2" fill="${s.c}"><title>${monthName(b.month)} · ${s.n}: ${s.t(v)}</title></rect>`;
+    }).join('');
+  }).join(''));
+}
+function lineChart(bs, series) {
+  const labels = bs.map(b => MON[+b.month.slice(5) - 1]);
+  const max = niceMax(Math.max(...bs.flatMap(b => series.map(s => s.f(b)))) * 1.05);
+  return chartFrame(labels, max, (x0, y0, iw, ih, slot) => series.map(s => {
+    const pts = bs.map((b, i) => [x0 + slot * (i + .5), y0 + ih * (1 - s.f(b) / max), b]);
+    return `<polyline fill="none" stroke="${s.c}" stroke-width="2" points="${pts.map(p => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ')}"/>` +
+      pts.map(p => `<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="3.5" fill="${s.c}"><title>${monthName(p[2].month)} · ${s.n}: ${s.t(s.f(p[2]))}</title></circle>`).join('');
+  }).join(''));
+}
+const legend = items => `<div class="small muted" style="display:flex;gap:14px;flex-wrap:wrap;margin:2px 0 4px">` +
+  items.map(([c, n]) => `<span><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:${c};margin-right:5px"></span>${n}</span>`).join('') + '</div>';
+function yearTable(bills) {
+  const y = {};
+  bills.forEach(b => { const k = b.month.slice(0, 4); const o = y[k] || (y[k] = {n: 0, paid: 0, dep: 0, imp: 0, exp: 0}); o.n++; o.paid += b.to_pay; o.dep += b.deposit_used; o.imp += b.import_kwh; o.exp += b.export_kwh; });
+  const ks = Object.keys(y).sort().reverse();
+  const g = 'grid-template-columns:.7fr .6fr 1.1fr 1.1fr 1fr 1fr';
+  return `<div class="cycles" style="max-height:none"><div class="crow h muted small" style="${g}"><span>Rok</span><span>Mies.</span><span>Zapłacono</span><span>Depozyt</span><span>Pobrano</span><span>Oddano</span></div>` +
+    ks.map(k => `<div class="crow" style="${g}"><b>${k}</b><span>${y[k].n}</span><b>${zl(y[k].paid)}</b><span>${zl(y[k].dep)}</span><span>${Math.round(y[k].imp)} kWh</span><span>${Math.round(y[k].exp)} kWh</span></div>`).join('') + '</div>';
+}
+function chartsHtml(all) {
+  const bs = [...all].sort((a, b) => a.month.localeCompare(b.month)).slice(-12), C = state.settings.currency;
+  const f2 = v => v.toFixed(2).replace('.', ',') + ' ' + C, kk = v => Math.round(v) + ' kWh';
+  return `<div class="sec">Ile płacisz miesięcznie (ostatnie ${bs.length} mies.)</div>${legend([['var(--accent)', 'do zapłaty'], ['var(--run)', 'pokryte depozytem z oddanej energii']])}` +
+    barChart(bs, [{n: 'do zapłaty', c: 'var(--accent)', f: b => b.to_pay, t: f2}, {n: 'depozyt', c: 'var(--run)', f: b => b.deposit_used, t: f2}], true) +
+    `<div class="sec">Pobrane i oddane (kWh)</div>${legend([['var(--done)', 'pobrano z sieci'], ['var(--run)', 'oddano do sieci']])}` +
+    barChart(bs, [{n: 'pobrano', c: 'var(--done)', f: b => b.import_kwh, t: kk}, {n: 'oddano', c: 'var(--run)', f: b => b.export_kwh, t: kk}], false) +
+    `<div class="sec">Ceny za kWh (brutto)</div>${legend([['var(--danger)', 'zakup z sieci'], ['var(--run)', 'wartość oddanej kWh']])}` +
+    lineChart(bs, [{n: 'zakup', c: 'var(--danger)', f: b => b.import_price, t: v => v.toFixed(3) + ' ' + C}, {n: 'oddana kWh', c: 'var(--run)', f: b => b.export_price, t: v => v.toFixed(3) + ' ' + C}]) +
+    `<div class="sec">Podsumowanie roczne</div>${yearTable(all)}`;
+}
 async function loadBills() {
   const r = await api('api/bills'), st = r.stats;
   if (!st) { $('#b_body').innerHTML = '<div class="banner">Nie ma jeszcze żadnej faktury.</div>'; return; }
@@ -559,6 +614,8 @@ async function loadBills() {
       ${tile('Skompensowane godzinowo', Math.round(st.netted_kwh) + ' kWh', 'Tyle z pobranych ' + Math.round(st.import_kwh) + ' kWh zbilansowano w tej samej godzinie energią z paneli')}
     </div>
     <div class="hint" style="margin-top:10px">Okres ${monthName(st.from)} – ${monthName(st.to)}. Aktualne ceny: zakup ${st.last.import_price.toFixed(3)} · oddana kWh ${st.last.export_price.toFixed(3)} ${esc(state.settings.currency)}.</div>
+    ${chartsHtml(r.bills)}
+    <div class="sec">Wszystkie faktury</div>
     <div class="cycles" style="max-height:none"><div class="crow h muted small" style="grid-template-columns:1.1fr 1fr 1fr 1fr 1.1fr 28px"><span>Miesiąc</span><span>Pobrano</span><span>Oddano</span><span>Depozyt</span><span>Do zapłaty</span><span></span></div>` +
     r.bills.map(b => `<div class="crow" style="grid-template-columns:1.1fr 1fr 1fr 1fr 1.1fr 28px"><span>${monthName(b.month)}</span><span>${Math.round(b.import_kwh)} kWh</span><span>${Math.round(b.export_kwh)} kWh</span><span>${zl(b.deposit_used)}</span><b>${zl(b.to_pay)}</b><button class="x" data-bd="${esc(b.month)}" title="Usuń fakturę" aria-label="Usuń fakturę">✕</button></div>`).join('') + '</div>';
   document.querySelectorAll('[data-bd]').forEach(b => b.onclick = async () => {
