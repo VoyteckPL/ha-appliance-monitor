@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.11.2
+- Naprawa: zapis kosztu instalacji i licznika produkcji używa świeżych ustawień, więc nie nadpisuje zmian zrobionych w drugiej karcie przeglądarki.
+
 ## 0.11.1
 - Pole „Koszt instalacji (zł)” zawsze widoczne w karcie fotowoltaiki (domyślnie 30 000 zł), zmiana od razu przelicza zwrot.
 

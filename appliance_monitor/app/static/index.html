@@ -739,7 +739,7 @@ async function pvWire() {
   const form = $('#pv_form');
   const ed = $('#pv_edit'); if (ed) ed.onclick = e => { e.preventDefault(); if (form) form.hidden = false; };
   const cs = $('#pv_cost_save'); if (cs) cs.onclick = async () => {
-    try { state.settings = await api('api/settings', 'PUT', {...state.settings, pv_cost: +$('#pv_cost2').value || 0}); renderStats(); }
+    try { state.settings = await api('api/settings', 'PUT', {...(await api('api/settings')), pv_cost: +$('#pv_cost2').value || 0}); renderStats(); }
     catch (e) { $('#pv_cost_err').textContent = e.message; }
   };
   if (!form) return;
@@ -748,7 +748,7 @@ async function pvWire() {
   $('#pv_ent').innerHTML = '<option value="">— wybierz —</option>' + energy.map(x => `<option value="${esc(x.entity_id)}" ${x.entity_id === state.settings.pv_entity ? 'selected' : ''}>${esc(x.name)} (${esc(x.entity_id)})</option>`).join('');
   $('#pv_save').onclick = async () => {
     try {
-      state.settings = await api('api/settings', 'PUT', {...state.settings, pv_entity: $('#pv_ent').value, pv_cost: +$('#pv_cost').value || 0});
+      state.settings = await api('api/settings', 'PUT', {...(await api('api/settings')), pv_entity: $('#pv_ent').value, pv_cost: +$('#pv_cost').value || 0});
       renderStats();
     } catch (e) { $('#pv_err').textContent = e.message; }
   };
