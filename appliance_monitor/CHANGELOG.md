@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.9.1
+- Noty odsetkowe są pomijane z czytelnym komunikatem (jak korekty).
+- Faktury bez pozycji energii (same opłaty) nie powodują błędu odczytu.
+
 ## 0.9.0
 - Odczyt faktur Energa w każdym układzie: sprzed fotowoltaiki (2019–2022), z premią prądową (2023), z depozytem w różnych wariantach (2024–2026). Sumy sprawdzone z zestawieniem CSV.
 - Faktury obejmujące kilka miesięcy rozdzielane na miesiące proporcjonalnie do dni; kilka faktur z jednego miesiąca sumuje się.

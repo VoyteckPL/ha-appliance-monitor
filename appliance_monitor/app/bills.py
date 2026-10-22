@@ -27,6 +27,8 @@ def parse_invoice(text):
     joined = "\n".join(lines)
     m = re.search(r"Faktura (korygująca )?VAT (\S+)", joined)
     if not m:
+        if re.search(r"[Nn]ota odsetkowa", joined):
+            raise ValueError("To nota odsetkowa (odsetki za spóźnioną wpłatę). Nie jest potrzebna.")
         raise ValueError("To nie wygląda na fakturę Energa.")
     if m.group(1):
         raise ValueError("To faktura korygująca (np. premia prądowa). Nie jest potrzebna: wartości bierzemy z faktur rozliczeniowych i CSV.")
@@ -54,9 +56,12 @@ def parse_invoice(text):
                 dist_v += value
     if energy_q <= 0:
         z = re.search(r"Zużycie energii elektrycznej: (\d+) kWh", joined)
-        if not z:
+        if z:
+            energy_q = float(z.group(1))
+        elif fixed > 0 or dist_v > 0:
+            energy_q = 0.0  # faktura bez energii (same opłaty)
+        else:
             raise ValueError("Nie znalazłem pozycji „Energia czynna całodobowa”.")
-        energy_q = float(z.group(1))
     billed = energy_q
 
     reads = [num(x) for x in re.findall(r"^G1\d\S* \d+ \S+ .* (\d+(?:,\d+)?) [A-Z] \d+$", joined, re.M)]

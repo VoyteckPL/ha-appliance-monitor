@@ -744,7 +744,7 @@ $('#b_file').onchange = async () => {
       }
       const r = await fetch('api/bills', {method: 'POST', headers: {'Content-Type': 'application/pdf'}, body: await f.arrayBuffer()});
       const t = await r.text();
-      if (!r.ok) { (/korygując/.test(t) ? corr : bad).push(`${f.name}: ${t}`); continue; }
+      if (!r.ok) { (/korygując|nota odsetkowa/.test(t) ? corr : bad).push(`${f.name}: ${t}`); continue; }
       const j = JSON.parse(t);
       ok.push(j.bill.month);
       if (j.prices_updated) { state.settings.import_price = j.bill.import_price; state.settings.export_price = j.bill.export_price; }
@@ -753,7 +753,7 @@ $('#b_file').onchange = async () => {
   const lines = [];
   if (csvMsg) lines.push(csvMsg);
   if (ok.length) lines.push(`✔ Wczytano faktur: ${ok.length} (nowe lub nadpisane miesiące: ${new Set(ok).size})`);
-  if (corr.length) lines.push(`↷ Pominięto korekt: ${corr.length} (nie są potrzebne)`);
+  if (corr.length) lines.push(`↷ Pominięto korekt i not odsetkowych: ${corr.length} (nie są potrzebne)`);
   if (bad.length) lines.push(`✖ Nie udało się odczytać: ${bad.length}`, ...bad.slice(0, 30));
   $('#b_msg').innerHTML = lines.map(esc).join('<br>');
   $('#b_file').value = ''; renderStats();
