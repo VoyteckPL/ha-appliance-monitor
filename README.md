@@ -26,6 +26,10 @@ Po każdej zmianie wersji w `appliance_monitor/config.yaml` HA pokaże przycisk 
 - **Koniec**: moc poniżej progu końca przez zadany czas (dłuższy niż najdłuższa przerwa w cyklu).
 - Cykle krótsze niż „min. czas cyklu" są odrzucane jako zakłócenia.
 - Wykres w panelu pokazuje moc z ostatnich 3 godzin wraz z progami, co ułatwia kalibrację.
+- **Szczegóły** każdego urządzenia: statystyki, koszt (cena prądu w ⚙), wykres energii dziennej i wykres mocy każdego cyklu.
+- **Wczytaj historię z HA** uzupełnia historię cykli z rejestratora Home Assistanta (do 14 dni wstecz).
+- **Sprawdź ustawienia** w formularzu urządzenia odtwarza historię przy podanych progach i pokazuje, ile cykli by wykryto.
+- Na karcie pracującego urządzenia widać szacowany czas końca.
 
 Dla każdego urządzenia w HA powstają encje: Stan (`idle`/`running`/`finished`), Pracuje,
 Energia cyklu, Czas cyklu, Ostatnie zakończenie.

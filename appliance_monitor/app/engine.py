@@ -36,6 +36,36 @@ PRESETS = {
 
 SAMPLE_EVERY_S = 10
 SENSOR_STALE_S = 120
+MAX_CYCLE_SAMPLES = 5000  # ok. 14 h co 10 s
+CURVE_POINTS = 120
+
+
+def make_curve(samples, max_points=CURVE_POINTS):
+    """Zagęszcza próbki (t, W) do krzywej: {t0, step, w:[...]} (średnia w przedziałach)."""
+    if len(samples) < 2:
+        return None
+    t0, t1 = samples[0][0], samples[-1][0]
+    span = max(t1 - t0, 1.0)
+    n = min(max_points, len(samples))
+    step = span / n
+    buckets = [[] for _ in range(n)]
+    for t, p in samples:
+        buckets[min(int((t - t0) / step), n - 1)].append(p)
+    w, last = [], samples[0][1]
+    for b in buckets:
+        if b:
+            last = sum(b) / len(b)
+        w.append(int(round(last)))
+    return {"t0": int(t0), "step": round(step, 2), "w": w}
+
+
+def entry_from_info(info):
+    """Wpis historii z informacji o zakończonym cyklu."""
+    return {
+        "start": int(info["started_at"]), "end": int(info["ended_at"]),
+        "duration_s": int(info["duration_s"]), "energy_wh": round(info["energy_wh"], 1),
+        "peak_w": info.get("peak_w", 0), "curve": info.get("curve"),
+    }
 
 
 def fmt_duration(sec):
@@ -81,6 +111,9 @@ class Appliance:
         self.last_tick = None
         self.last_sample = 0.0
         self.samples = deque(maxlen=1080)  # ok. 3 h co 10 s
+        self.cycle_samples = []  # próbki (t, W) bieżącego cyklu, do wykresu w historii
+        if self.state == RUNNING:
+            self.cycle_samples = [(float(t), float(p)) for t, p in r.get("cycle_samples", [])]
 
     # --- wejście ---
     def set_power(self, value_w, now):
@@ -123,6 +156,8 @@ class Appliance:
 
         if now - self.last_sample >= SAMPLE_EVERY_S:
             self.samples.append((now, p))
+            if self.state == RUNNING and len(self.cycle_samples) < MAX_CYCLE_SAMPLES:
+                self.cycle_samples.append((now, p))
             self.last_sample = now
 
         if self.state in (IDLE, FINISHED):
@@ -136,6 +171,8 @@ class Appliance:
                     self.above_since = None
                     self.below_since = None
                     self.finished_at = None
+                    # krzywa zaczyna się chwilę przed startem (próbki z okresu wykrywania)
+                    self.cycle_samples = [(t, v) for t, v in self.samples if t >= self.cycle_start - 30]
                     events.append(("start", {"name": c["name"], "started_at": self.cycle_start}))
             else:
                 self.above_since = None
@@ -151,15 +188,20 @@ class Appliance:
                     if info["duration_s"] < c["min_duration"]:
                         self.state = IDLE  # zbyt krótkie, uznajemy za zakłócenie
                         self.cycle_start = None
+                        self.cycle_samples = []
                         events.append(("abort", info))
                     else:
+                        info["curve"] = make_curve(self.cycle_samples)
+                        info["peak_w"] = int(round(max((v for _, v in self.cycle_samples), default=0)))
                         self.state = FINISHED
                         self.finished_at = now
                         self.last_cycle = {
                             "start": info["started_at"], "end": ended,
                             "duration_s": info["duration_s"], "energy_wh": round(info["energy_wh"], 1),
+                            "peak_w": info["peak_w"],
                         }
                         self.cycle_start = None
+                        self.cycle_samples = []
                         events.append(("finish", info))
             else:
                 self.below_since = None
@@ -172,4 +214,7 @@ class Appliance:
             "state": self.state, "cycle_start": self.cycle_start,
             "energy_wh": self.energy_wh, "finished_at": self.finished_at,
             "last_cycle": self.last_cycle,
+            # co 3. próbka (30 s), żeby po restarcie nie zgubić początku wykresu
+            "cycle_samples": [[round(t, 1), round(v, 1)] for t, v in self.cycle_samples[::3]]
+            if self.state == RUNNING else [],
         }

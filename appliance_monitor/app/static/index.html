@@ -16,9 +16,11 @@
   * { box-sizing: border-box; }
   body { margin:0; background:var(--bg); color:var(--text); font:15px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
   header { display:flex; align-items:center; justify-content:space-between; padding:16px 16px 8px; max-width:900px; margin:0 auto; }
-  h1 { font-size:20px; margin:0; }
+  h1 { font-size:20px; margin:0; display:flex; align-items:center; gap:10px; }
+  .hbtns { display:flex; gap:8px; }
   main { max-width:900px; margin:0 auto; padding:8px 16px 40px; display:grid; gap:12px; }
   button { font:inherit; cursor:pointer; border:1px solid var(--line); background:var(--card); color:var(--text); padding:8px 14px; border-radius:10px; }
+  button:disabled { opacity:.55; cursor:default; }
   button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
   button.danger { color:var(--danger); }
   .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px; }
@@ -39,6 +41,7 @@
   .banner { background:color-mix(in srgb,var(--done) 18%,transparent); border:1px solid var(--done); border-radius:10px; padding:10px 12px; }
   .empty { text-align:center; padding:40px 16px; }
   dialog { border:none; border-radius:16px; padding:0; width:min(560px,94vw); background:var(--card); color:var(--text); }
+  dialog.wide { width:min(780px,96vw); }
   dialog::backdrop { background:rgba(0,0,0,.5); }
   form { padding:18px; display:grid; gap:12px; max-height:86vh; overflow:auto; }
   label { display:grid; gap:4px; font-size:13px; color:var(--muted); }
@@ -48,10 +51,10 @@
   fieldset { border:1px solid var(--line); border-radius:10px; margin:0; padding:10px 12px; display:grid; gap:8px; }
   legend { padding:0 6px; color:var(--muted); font-size:13px; }
   .chk { display:flex; align-items:center; gap:8px; color:var(--text); font-size:15px; }
-  .actions { display:flex; gap:8px; justify-content:flex-end; flex-wrap:wrap; }
+  .actions { display:flex; gap:8px; justify-content:flex-end; flex-wrap:wrap; align-items:center; }
   .hint { font-size:12px; color:var(--muted); margin-top:-6px; }
 
-  /* ikony urządzeń */
+  /* ikony urządzeń: animują się WYŁĄCZNIE w stanie "running" */
   :root { --ic-body:#f3f6fb; --ic-line:#9aaac2; --ic-ring:#dfe7f2; --ic-disp:#475569; --ic-glass:#bcd8f5;
           --ic-glass-warm:#f7cf9c; --ic-water:#8fc0ee; --ic-bolt:#94a3b8; --ic-rack:#7d93b3; }
   @media (prefers-color-scheme: dark) {
@@ -72,39 +75,72 @@
   .ic-plate { fill:none; stroke:#fff; stroke-width:1.5; stroke-linecap:round; opacity:.9; }
   .ic-handle { stroke:var(--ic-line); stroke-width:2.4; stroke-linecap:round; }
   .ic-bolt { fill:var(--ic-bolt); }
-  .drop { fill:#fff; opacity:.4; }
-  .spin, .pulse, .drop { animation-play-state:paused; }
-  .spin { animation:spin 2.4s linear infinite; transform-origin:32px 38px; }
-  .spin.fast { animation-duration:1.1s; }
-  .pulse { animation:pulse 1.1s ease-in-out infinite; transform-origin:32px 32px; }
-  .drop { animation:drip 1.1s linear infinite; }
-  .d2 { animation-delay:-.3s; } .d3 { animation-delay:-.6s; } .d4 { animation-delay:-.85s; }
-  .running .spin, .running .pulse, .running .drop { animation-play-state:running; }
+  .drop { fill:#fff; opacity:0; }
+  .spin { transform-origin:32px 38px; }
+  .pulse { transform-origin:32px 32px; }
   .running .ic-glass { fill:color-mix(in srgb,var(--run) 38%,var(--ic-glass)); }
   .running .ic-glass.warm { fill:color-mix(in srgb,var(--done) 45%,var(--ic-glass-warm)); }
-  .running .ic-disp { fill:var(--run); } .running .ic-bolt { fill:var(--run); }
+  .running .ic-disp, .running .ic-bolt { fill:var(--run); }
   .running .ic-heat { stroke:var(--done); }
   .finished .ic-disp { fill:var(--done); }
+  .running .spin { animation:spin 2.4s linear infinite; }
+  .running .spin.fast { animation-duration:1.1s; }
+  .running .pulse { animation:pulse 1.1s ease-in-out infinite; }
+  .running .drop { animation:drip 1.1s linear infinite; }
+  .running .drop.d2 { animation-delay:-.3s; } .running .drop.d3 { animation-delay:-.6s; } .running .drop.d4 { animation-delay:-.85s; }
   @keyframes spin { to { transform:rotate(360deg); } }
   @keyframes pulse { 50% { transform:scale(1.14); } }
   @keyframes drip { 0% { transform:translateY(-2px); opacity:0; } 25% { opacity:1; } 100% { transform:translateY(6px); opacity:0; } }
-  @media (prefers-reduced-motion: reduce) { .spin, .pulse, .drop { animation:none !important; } }
+  @media (prefers-reduced-motion: reduce) { .running .spin, .running .pulse, .running .drop { animation:none !important; } }
   .title { display:flex; align-items:center; gap:12px; min-width:0; }
   .logo { width:30px; height:30px; flex:none; }
-  h1 { display:flex; align-items:center; gap:10px; }
   .big .ic { width:72px; height:72px; margin:0 auto 10px; }
+
+  /* szczegóły */
+  .det { padding:18px; display:grid; gap:14px; max-height:90vh; overflow:auto; }
+  .tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:8px; }
+  .tile { border:1px solid var(--line); border-radius:12px; padding:10px 12px; background:var(--bg); }
+  .tile b { display:block; font-size:19px; margin-top:2px; }
+  .sec { font-size:13px; color:var(--muted); font-weight:600; margin-bottom:4px; }
+  .bars, .cv { width:100%; height:auto; display:block; }
+  .bars rect { fill:var(--accent); } .bars text { fill:var(--muted); font-size:10.5px; text-anchor:middle; }
+  .cv { touch-action:pan-y; }
+  .cv .area { fill:color-mix(in srgb,var(--pw) 18%,transparent); }
+  .cv .ln { fill:none; stroke:var(--pw); stroke-width:1.7; stroke-linejoin:round; }
+  .cv .grid { stroke:var(--line); stroke-width:1; } .cv text { fill:var(--muted); font-size:10.5px; }
+  .cv .endl { stroke:var(--done); stroke-dasharray:4 3; } .cv .endt { fill:var(--done); }
+  .cv .cursor { stroke:var(--text); opacity:.45; }
+  .cyc-head { display:flex; gap:6px 16px; flex-wrap:wrap; align-items:baseline; margin-bottom:6px; }
+  .cycles { max-height:250px; overflow:auto; border:1px solid var(--line); border-radius:12px; }
+  .crow { display:grid; grid-template-columns:1.6fr 1fr 1fr 1fr 30px; gap:6px; padding:8px 10px; border-bottom:1px solid var(--line); cursor:pointer; align-items:center; font-size:14px; }
+  .crow:last-child { border-bottom:none; }
+  .crow.h { cursor:default; position:sticky; top:0; background:var(--card); }
+  .crow:not(.h):hover { background:var(--bg); }
+  .crow.sel { background:color-mix(in srgb,var(--accent) 14%,transparent); }
+  .crow .x { padding:2px 6px; border:none; background:transparent; color:var(--muted); border-radius:8px; }
+  .crow .x:hover { color:var(--danger); }
+  details summary { cursor:pointer; color:var(--muted); margin-top:4px; }
+  @media (max-width:520px) {
+    .crow { font-size:12.5px; gap:4px; padding:8px; grid-template-columns:1.5fr 1.1fr 1fr .9fr 24px; }
+    .det { padding:14px; }
+    .grid2 { grid-template-columns:1fr; }
+  }
 </style>
 </head>
 <body>
 <header>
   <h1><svg class="logo" viewBox="0 0 64 64" aria-hidden="true"><defs><linearGradient id="lg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#182669"/><stop offset="1" stop-color="#08aabe"/></linearGradient></defs><rect width="64" height="64" rx="15" fill="url(#lg)"/><rect x="13" y="8" width="38" height="46" rx="6" fill="#eef3fa"/><line x1="13" y1="20" x2="51" y2="20" stroke="#b0c0d6" stroke-width="1"/><circle cx="32" cy="38" r="13.5" fill="#8a9bb8"/><circle cx="32" cy="38" r="11.5" fill="#1e90e8"/><polyline points="21,39 27,39 29,34 32,43 35,30 38,40 40,39 43,39" fill="none" stroke="#fff" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/></svg>Urządzenia</h1>
-  <button class="primary" id="add">+ Dodaj</button>
+  <div class="hbtns">
+    <button id="gear" title="Ustawienia ogólne (cena prądu)" aria-label="Ustawienia ogólne">⚙</button>
+    <button class="primary" id="add">+ Dodaj</button>
+  </div>
 </header>
 <main id="list"></main>
 
+<!-- edycja urządzenia -->
 <dialog id="dlg">
   <form method="dialog" id="form">
-    <div class="title"><span id="f_icon" class="running"></span><b id="dlg-title">Nowe urządzenie</b></div>
+    <div class="title"><span id="f_icon"></span><b id="dlg-title">Nowe urządzenie</b></div>
     <div class="grid2">
       <label>Rodzaj
         <select id="f_preset"></select>
@@ -133,8 +169,14 @@
       <div class="hint">Ustaw dłużej niż najdłuższa przerwa w środku cyklu, inaczej koniec wykryje się za wcześnie.</div>
       <div class="grid2">
         <label>Min. czas cyklu (min)<input type="number" id="f_min_dur" step="1" min="0"></label>
-        <label>Wróć do „czeka" po (min)<input type="number" id="f_reset" step="5" min="1"></label>
+        <label>Wróć do „wyłączone" po (min)<input type="number" id="f_reset" step="5" min="1"></label>
       </div>
+    </fieldset>
+    <fieldset>
+      <legend>Sprawdź na historii</legend>
+      <div class="hint" style="margin-top:0">Odtwarza ostatnie 14 dni poboru z Home Assistanta przy powyższych progach i pokazuje, ile cykli zostałoby wykrytych.</div>
+      <div><button type="button" id="f_replay">Sprawdź ustawienia</button></div>
+      <div id="f_replay_out" class="small"></div>
     </fieldset>
 
     <fieldset>
@@ -157,10 +199,38 @@
   </form>
 </dialog>
 
+<!-- szczegóły i historia -->
+<dialog id="det" class="wide">
+  <div class="det">
+    <div class="row">
+      <span class="title"><span id="d_icon"></span><b id="d_title" style="font-size:18px"></b></span>
+      <button id="d_close">Zamknij</button>
+    </div>
+    <div id="d_body"></div>
+  </div>
+</dialog>
+
+<!-- ustawienia ogólne -->
+<dialog id="sdlg">
+  <form method="dialog">
+    <b>Ustawienia ogólne</b>
+    <div class="grid2">
+      <label>Cena prądu za kWh<input type="number" id="s_price" step="0.01" min="0"></label>
+      <label>Waluta<input type="text" id="s_cur" maxlength="8"></label>
+    </div>
+    <div class="hint">Służy do wyliczania kosztu cykli w widoku Szczegóły.</div>
+    <div id="s_err" class="small" style="color:var(--danger)"></div>
+    <div class="actions">
+      <button type="button" id="s_cancel">Anuluj</button>
+      <button type="button" class="primary" id="s_save">Zapisz</button>
+    </div>
+  </form>
+</dialog>
+
 <script>
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const LABEL = {idle:'Czeka', running:'Pracuje', finished:'Zakończone'};
+const LABEL = {idle:'Wyłączone', running:'Pracuje', finished:'Gotowe'};
 
 const TOP = `<rect class="ic-body" x="9" y="4" width="46" height="56" rx="8"/><line class="ic-line" x1="9" y1="17" x2="55" y2="17"/><circle class="ic-knob" cx="17" cy="11" r="2.6"/>`;
 const ICONS = {
@@ -171,7 +241,8 @@ const ICONS = {
 };
 const icon = p => `<svg class="ic" viewBox="0 0 64 64" aria-hidden="true">${ICONS[p] || ICONS.other}</svg>`;
 function setFormIcon() { $('#f_icon').innerHTML = icon($('#f_preset').value); }
-let state = {appliances:[], mqtt:false, ha_ok:true};
+
+let state = {appliances:[], mqtt:false, ha_ok:true, settings:{price_per_kwh:1, currency:'zł'}};
 let options = null;
 let editingId = null;
 
@@ -185,6 +256,10 @@ const fmtDur = s => { s = Math.max(0, Math.round(s)); const h = Math.floor(s/360
   return h ? `${h} h ${m} min` : (s >= 60 ? `${m} min` : `${s} s`); };
 const fmtAgo = ts => fmtDur(Date.now()/1000 - ts) + ' temu';
 const fmtTime = ts => new Date(ts*1000).toLocaleString('pl-PL', {day:'numeric', month:'short', hour:'2-digit', minute:'2-digit'});
+const clock = ts => new Date(ts*1000).toLocaleTimeString('pl-PL', {hour:'2-digit', minute:'2-digit'});
+const kwh = wh => (wh/1000).toFixed(2);
+const money = wh => (wh/1000 * state.settings.price_per_kwh).toFixed(2) + ' ' + state.settings.currency;
+function niceMax(v) { const p = Math.pow(10, Math.floor(Math.log10(v))); for (const m of [1,2,2.5,5,10]) if (m*p >= v) return m*p; return v; }
 
 function chart(a) {
   const s = a.samples, c = a.cfg, W = 300, H = 70;
@@ -210,12 +285,19 @@ function card(a) {
   }
   let sub = '';
   if (a.state === 'finished' && a.finished_at) sub = `<div class="small muted">Zakończono ${fmtAgo(a.finished_at)}</div>`;
+  if (a.state === 'running' && a.typical_s && a.elapsed_s != null) {
+    const rem = a.typical_s - a.elapsed_s;
+    sub = rem > 60
+      ? `<div class="small muted">Szac. koniec za ok. ${fmtDur(rem)} (ok. ${clock(Date.now()/1000 + rem)})</div>`
+      : `<div class="small muted">Trwa dłużej niż zwykle (zwykle ${fmtDur(a.typical_s)})</div>`;
+  }
   const warn = a.sensor_ok ? '' : `<div class="small" style="color:var(--danger)">Brak odczytu z czujnika ${esc(c.power_entity)}</div>`;
-  const hist = a.history.length ? `<div class="hist small muted">${a.history.map(h =>
-    `<div>${fmtTime(h.start)} · ${fmtDur(h.duration_s)} · ${(h.energy_wh/1000).toFixed(2)} kWh</div>`).join('')}</div>` : '';
+  const hist = a.history.length ? `<div class="hist small muted">${a.history.slice(0, 3).map(h =>
+    `<div>${fmtTime(h.start)} · ${fmtDur(h.duration_s)} · ${kwh(h.energy_wh)} kWh</div>`).join('')}</div>` : '';
   return `<div class="card ${a.state}">
     <div class="row"><span class="title">${icon(c.preset)}<span class="name">${esc(c.name)}</span></span>
-      <span><span class="badge ${a.state}">${LABEL[a.state]}</span> <button data-edit="${esc(a.id)}">Ustawienia</button></span></div>
+      <span><span class="badge ${a.state}">${LABEL[a.state]}</span>
+        <button data-det="${esc(a.id)}">Szczegóły</button> <button data-edit="${esc(a.id)}">Ustawienia</button></span></div>
     <div class="stats">${stats}</div>${sub}${warn}${chart(a)}${hist}</div>`;
 }
 
@@ -228,6 +310,7 @@ function render() {
     : '<div class="card empty big">' + icon('washer') + '<p>Nie ma jeszcze żadnych urządzeń.</p><button class="primary" id="add2">+ Dodaj pierwsze</button></div>';
   list.innerHTML = html;
   list.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => openForm(b.dataset.edit));
+  list.querySelectorAll('[data-det]').forEach(b => b.onclick = () => openDetails(b.dataset.det));
   const a2 = $('#add2'); if (a2) a2.onclick = () => openForm(null);
 }
 
@@ -235,7 +318,165 @@ async function refresh() {
   try { state = await api('api/appliances'); render(); } catch (e) { /* chwilowy błąd, próbujemy dalej */ }
 }
 
-// ---------- formularz ----------
+// ---------- szczegóły i historia ----------
+let det = {id:null, entries:[], sel:null};
+const bodyW = () => Math.max(300, Math.floor($('#d_body').clientWidth || 600));
+
+async function openDetails(id) {
+  const a = state.appliances.find(x => x.id === id);
+  if (!a) return;
+  det = {id, entries:[], sel:null};
+  $('#d_title').textContent = a.cfg.name;
+  $('#d_icon').className = a.state;
+  $('#d_icon').innerHTML = icon(a.cfg.preset);
+  $('#d_body').innerHTML = '<div class="muted">Wczytuję…</div>';
+  $('#det').showModal();
+  await loadDetails();
+}
+
+async function loadDetails() {
+  try { det.entries = await api(`api/appliances/${det.id}/history`); }
+  catch (e) { $('#d_body').innerHTML = `<div class="banner">${esc(e.message)}</div>`; return; }
+  if (!det.entries.some(e => e.start === det.sel)) det.sel = det.entries.length ? det.entries[0].start : null;
+  renderDetails();
+}
+
+function renderDetails() {
+  const E = det.entries, S = state.settings, now = Date.now() / 1000;
+  const win = E.filter(e => e.start > now - 30 * 86400);
+  const wh = win.reduce((s, e) => s + e.energy_wh, 0);
+  const avgD = win.length ? win.reduce((s, e) => s + e.duration_s, 0) / win.length : 0;
+  let html = '';
+  if (!E.length) {
+    html += '<div class="banner">Nie ma jeszcze zapisanych cykli. Możesz wczytać historię z Home Assistanta (przycisk niżej) albo poczekać na pierwszy cykl.</div>';
+  } else {
+    html += `<div class="tiles">
+      <div class="tile"><span class="muted small">Cykle (30 dni)</span><b>${win.length}</b></div>
+      <div class="tile"><span class="muted small">Energia</span><b>${kwh(wh)} kWh</b></div>
+      <div class="tile"><span class="muted small">Koszt</span><b>${money(wh)}</b></div>
+      <div class="tile"><span class="muted small">Średni czas</span><b>${win.length ? fmtDur(avgD) : '—'}</b></div>
+      <div class="tile"><span class="muted small">Średnio na cykl</span><b>${win.length ? kwh(wh / win.length) + ' kWh' : '—'}</b></div></div>
+      <div class="hint">Koszt wg ceny ${esc(S.price_per_kwh)} ${esc(S.currency)}/kWh. Zmienisz ją w ⚙ na górze strony.</div>
+      <div><div class="sec">Energia dziennie (14 dni)</div>${dayBars(E)}</div>
+      <div><div class="sec">Wykres mocy cyklu</div><div id="d_chart"></div></div>
+      <div><div class="sec">Cykle (kliknij, żeby zobaczyć wykres)</div>${cycleList(E)}</div>`;
+  }
+  html += `<div class="actions" style="justify-content:space-between"><span id="d_msg" class="small muted"></span>
+    <button id="d_backfill">Wczytaj historię z HA (14 dni)</button></div>`;
+  $('#d_body').innerHTML = html;
+  if (E.length) { drawChart(); bindList(); }
+  $('#d_backfill').onclick = backfill;
+}
+
+function dayBars(E) {
+  const days = [], today = new Date(); today.setHours(0, 0, 0, 0);
+  for (let i = 13; i >= 0; i--) { const d = new Date(today); d.setDate(d.getDate() - i); days.push({d, wh:0, n:0}); }
+  E.forEach(e => { const d = new Date(e.start * 1000); d.setHours(0, 0, 0, 0);
+    const s = days.find(x => x.d.getTime() === d.getTime()); if (s) { s.wh += e.energy_wh; s.n++; } });
+  const W = bodyW(), H = 110, slot = W / 14, bw = Math.min(34, slot * 0.64), max = Math.max(...days.map(d => d.wh), 1);
+  const bars = days.map((s, i) => {
+    const x = i * slot + (slot - bw) / 2, h = s.wh / max * (H - 40), y = H - 20 - h;
+    const tip = `<title>${s.d.toLocaleDateString('pl-PL', {weekday:'short', day:'numeric', month:'short'})}: ${s.n} cykli, ${kwh(s.wh)} kWh</title>`;
+    return `<g>${tip}${s.n ? `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(h, 2).toFixed(1)}" rx="3"/>
+      <text x="${(x + bw/2).toFixed(1)}" y="${(y - 4).toFixed(1)}">${s.n}×</text>`
+      : `<rect x="${x.toFixed(1)}" y="${H - 22}" width="${bw.toFixed(1)}" height="2" rx="1" opacity=".25"/>`}
+      <text x="${(x + bw/2).toFixed(1)}" y="${H - 6}">${s.d.getDate()}</text></g>`;
+  }).join('');
+  return `<svg class="bars" viewBox="0 0 ${W} ${H}">${bars}</svg>`;
+}
+
+function cycleList(E) {
+  return `<div class="cycles"><div class="crow h muted small"><span>Start</span><span>Czas</span><span>kWh</span><span>Koszt</span><span></span></div>` +
+    E.map(e => `<div class="crow ${e.start === det.sel ? 'sel' : ''}" data-s="${e.start}"><span>${fmtTime(e.start)}</span><span>${fmtDur(e.duration_s)}</span><span>${kwh(e.energy_wh)}</span><span>${money(e.energy_wh)}</span><button class="x" data-del="${e.start}" title="Usuń z historii" aria-label="Usuń z historii">✕</button></div>`).join('') + '</div>';
+}
+
+function bindList() {
+  document.querySelectorAll('#d_body .crow[data-s]').forEach(r => r.onclick = () => {
+    det.sel = +r.dataset.s;
+    document.querySelectorAll('#d_body .crow').forEach(x => x.classList.toggle('sel', x === r));
+    drawChart();
+  });
+  document.querySelectorAll('#d_body [data-del]').forEach(b => b.onclick = async ev => {
+    ev.stopPropagation();
+    if (!confirm('Usunąć ten cykl z historii? (np. fałszywe wykrycie)')) return;
+    try { await api(`api/appliances/${det.id}/history/${b.dataset.del}`, 'DELETE'); await loadDetails(); }
+    catch (e) { alert(e.message); }
+  });
+}
+
+function drawChart() {
+  const box = $('#d_chart'), e = det.entries.find(x => x.start === det.sel);
+  if (!box) return;
+  if (!e) { box.innerHTML = ''; return; }
+  const head = `<div class="cyc-head"><b>${fmtTime(e.start)}</b><span>${fmtDur(e.duration_s)}</span><span>${kwh(e.energy_wh)} kWh</span><span>${money(e.energy_wh)}</span>
+    <span class="muted">${e.peak_w ? 'szczyt ' + e.peak_w + ' W' : ''}</span><span id="c_hover" class="muted small"></span></div>`;
+  const c = e.curve;
+  if (!c || !c.w || c.w.length < 2) {
+    box.innerHTML = head + '<div class="muted small">Brak wykresu dla tego cyklu (zapisany przez wcześniejszą wersję). Przycisk „Wczytaj historię z HA" uzupełni go, jeśli cykl mieści się w ostatnich dniach.</div>';
+    return;
+  }
+  const W = bodyW(), H = 190, L = 52, R = 8, T = 10, B = 22;
+  const n = c.w.length, span = n * c.step, ymax = niceMax(Math.max(...c.w, 10));
+  const X = t => L + t / span * (W - L - R), Y = w => T + (1 - w / ymax) * (H - T - B);
+  const pts = c.w.map((w, i) => `${X(i * c.step + c.step / 2).toFixed(1)},${Y(w).toFixed(1)}`);
+  const area = `${X(c.step / 2).toFixed(1)},${Y(0)} ${pts.join(' ')} ${X((n - 0.5) * c.step).toFixed(1)},${Y(0)}`;
+  const spanMin = span / 60, tk = [5, 10, 15, 30, 60, 120, 180].find(s => spanMin / s <= 7) || 240;
+  let xt = '';
+  for (let m = 0; m <= spanMin; m += tk) {
+    const lab = m < 60 ? m + ' min' : (m % 60 ? Math.floor(m / 60) + ' h ' + (m % 60) : (m / 60) + ' h');
+    xt += `<text x="${X(m * 60).toFixed(1)}" y="${H - 6}" text-anchor="${m === 0 ? 'start' : 'middle'}">${m === 0 ? '0' : lab}</text>`;
+  }
+  const yt = [0, ymax / 2, ymax].map(v => `<line class="grid" x1="${L}" x2="${W - R}" y1="${Y(v).toFixed(1)}" y2="${Y(v).toFixed(1)}"/>
+    <text x="${L - 5}" y="${(Y(v) + 3.5).toFixed(1)}" text-anchor="end">${Math.round(v)} W</text>`).join('');
+  const xe = X(e.end - c.t0);
+  const endm = (xe > L && xe < W - R) ? `<line class="endl" x1="${xe.toFixed(1)}" x2="${xe.toFixed(1)}" y1="${T}" y2="${H - B}"/>
+    <text class="endt" x="${(xe - 4).toFixed(1)}" y="${T + 9}" text-anchor="end">koniec wykryty</text>` : '';
+  box.innerHTML = head + `<svg class="cv" viewBox="0 0 ${W} ${H}" id="c_svg">${yt}${xt}
+    <polygon class="area" points="${area}"/><polyline class="ln" points="${pts.join(' ')}"/>${endm}
+    <line class="cursor" id="c_cur" y1="${T}" y2="${H - B}" x1="-10" x2="-10"/></svg>`;
+  const svg = $('#c_svg');
+  const move = ev => {
+    const r = svg.getBoundingClientRect(), px = (ev.clientX - r.left) * (W / r.width);
+    const t = (px - L) / (W - L - R) * span;
+    if (t < 0 || t > span) return leave();
+    const i = Math.min(n - 1, Math.floor(t / c.step));
+    $('#c_cur').setAttribute('x1', px); $('#c_cur').setAttribute('x2', px);
+    $('#c_hover').textContent = `${fmtDur(t)} od startu · ${c.w[i]} W`;
+  };
+  const leave = () => { $('#c_cur').setAttribute('x1', -10); $('#c_cur').setAttribute('x2', -10); $('#c_hover').textContent = ''; };
+  svg.addEventListener('pointermove', move);
+  svg.addEventListener('pointerleave', leave);
+}
+
+async function backfill() {
+  const btn = $('#d_backfill'), msg = $('#d_msg');
+  btn.disabled = true; msg.textContent = 'Pobieram historię z Home Assistanta…';
+  try {
+    const r = await api(`api/appliances/${det.id}/backfill`, 'POST', {days: 14});
+    await loadDetails();
+    $('#d_msg').textContent = r.found
+      ? `Wykryto ${r.found} cykli z ${r.days} dni: dodano ${r.added}${r.updated ? ', uzupełniono ' + r.updated : ''}.`
+      : 'W tym okresie nie wykryto żadnych cykli. Sprawdź progi w ustawieniach urządzenia.';
+  } catch (e) { msg.textContent = e.message; btn.disabled = false; }
+}
+
+$('#d_close').onclick = () => $('#det').close();
+window.addEventListener('resize', () => { if ($('#det').open && det.entries.length) { renderDetails(); } });
+
+// ---------- ustawienia ogólne ----------
+$('#gear').onclick = () => {
+  $('#s_price').value = state.settings.price_per_kwh; $('#s_cur').value = state.settings.currency;
+  $('#s_err').textContent = ''; $('#sdlg').showModal();
+};
+$('#s_cancel').onclick = () => $('#sdlg').close();
+$('#s_save').onclick = async () => {
+  try {
+    state.settings = await api('api/settings', 'PUT', {price_per_kwh: +$('#s_price').value, currency: $('#s_cur').value});
+    $('#sdlg').close(); if ($('#det').open && det.entries.length) renderDetails(); refresh();
+  } catch (e) { $('#s_err').textContent = e.message; }
+};
+
+// ---------- formularz urządzenia ----------
 function fillPreset(key, keepName) {
   const p = options.presets[key];
   $('#f_start_th').value = p.start_threshold; $('#f_start_delay').value = p.start_delay;
@@ -245,7 +486,7 @@ function fillPreset(key, keepName) {
 }
 
 async function openForm(id) {
-  $('#f_err').textContent = ''; $('#f_err').style.color = 'var(--danger)';
+  $('#f_err').textContent = ''; $('#f_err').style.color = 'var(--danger)'; $('#f_replay_out').textContent = '';
   try { options = await api('api/options'); } catch (e) { alert(e.message); return; }
   editingId = id;
   const a = id ? state.appliances.find(x => x.id === id) : null;
@@ -311,6 +552,22 @@ $('#f_test').onclick = async () => {
   try { await api('api/test_notify', 'POST', {name: $('#f_name').value || 'Test', targets: readForm().notify_targets});
     $('#f_err').style.color = 'var(--run)'; $('#f_err').textContent = 'Wysłano.'; }
   catch (e) { $('#f_err').style.color = 'var(--danger)'; $('#f_err').textContent = e.message; }
+};
+$('#f_replay').onclick = async () => {
+  const out = $('#f_replay_out'), btn = $('#f_replay');
+  out.style.color = ''; out.textContent = 'Odtwarzam historię…'; btn.disabled = true;
+  try {
+    const r = await api('api/replay', 'POST', {...readForm(), days: 14});
+    const C = r.cycles;
+    if (!C.length) { out.textContent = `Nie wykryto żadnego cyklu w ostatnich ${r.days} dniach. Sprawdź czujnik i próg startu.`; return; }
+    const d = C.map(c => c.duration_s).sort((x, y) => x - y), med = d[Math.floor(d.length / 2)];
+    const odd = C.filter(c => c.duration_s < med * 0.5).length;
+    out.innerHTML = `Wykryto <b>${C.length}</b> cykli w ${r.days} dni · czas ${fmtDur(d[0])}–${fmtDur(d[d.length - 1])}, typowo ${fmtDur(med)}.`
+      + (odd ? `<div style="color:var(--done)">⚠ ${odd} z nich jest dużo krótszych od typowego. To może być fałszywe wykrycie albo koniec wykryty za wcześnie (spróbuj wydłużyć czas poniżej progu).</div>` : '')
+      + `<details><summary>Lista cykli</summary>${C.slice().reverse().map(c =>
+        `<div class="muted">${fmtTime(c.start)} · ${fmtDur(c.duration_s)} · ${kwh(c.energy_wh)} kWh</div>`).join('')}</details>`;
+  } catch (e) { out.style.color = 'var(--danger)'; out.textContent = e.message; }
+  finally { btn.disabled = false; }
 };
 
 refresh();

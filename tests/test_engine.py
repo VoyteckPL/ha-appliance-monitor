@@ -111,6 +111,56 @@ def test_render_and_discovery():
     assert states["appliance_monitor/pralka/running"] == "ON"
 
 
+def test_curve_and_peak_recorded():
+    a = make()
+    ev = feed(a, 1000, 1000 + 3600, 200) + feed(a, 1000 + 3600, 1000 + 3600 + 400, 0)
+    fin = [i for k, i in ev if k == "finish"]
+    assert len(fin) == 1
+    c = fin[0]["curve"]
+    assert c and len(c["w"]) <= 120 and c["step"] > 0
+    assert c["t0"] <= 1000 and fin[0]["peak_w"] == 200
+    assert max(c["w"]) == 200 and c["w"][-1] == 0          # ogon po końcu też jest na wykresie
+    assert a.cycle_samples == [] and a.last_cycle["peak_w"] == 200
+
+
+def test_cycle_samples_survive_restart():
+    a = make()
+    feed(a, 0, 600, 100)
+    assert a.state == RUNNING and len(a.cycle_samples) > 30
+    b = Appliance(a.cfg, json.loads(json.dumps(a.runtime_export())))
+    assert b.state == RUNNING and 15 < len(b.cycle_samples) < len(a.cycle_samples)
+    # po restarcie dalej zbiera i kończy cykl z krzywą
+    ev = feed(b, 600, 3000, 100) + feed(b, 3000, 3400, 0)
+    fin = [i for k, i in ev if k == "finish"]
+    assert fin and fin[0]["curve"]["t0"] <= 15              # krzywa zaczyna się od początku cyklu, nie od restartu
+
+
+def test_replay_matches_live_and_skips_idle():
+    from replay import replay
+    cfg = make().cfg
+    # odczyty tylko przy zmianach (jak w historii HA): 0 -> 120 W na 40 min -> 0, dwa razy w odstępie 9 h
+    r, t = [], 0.0
+    for _ in range(2):
+        r += [(t, 0.0), (t + 30, 120.0), (t + 30 + 2400, 0.0)]
+        t += 9 * 3600
+    r.append((t, 0.0))
+    cycles = replay(cfg, r)
+    assert len(cycles) == 2
+    assert all(abs(c["duration_s"] - 2400) < 15 for c in cycles)
+    assert all(c["curve"] and c["peak_w"] == 120 for c in cycles)
+    assert cycles[0]["start"] < cycles[1]["start"]
+    # za krótki impuls nie daje cyklu
+    assert replay(cfg, [(0, 0.0), (100, 120.0), (160, 0.0), (5000, 0.0)]) == []
+
+
+def test_replay_unavailable_does_not_end_cycle():
+    from replay import replay
+    cfg = make().cfg
+    r = [(0, 0.0), (60, 150.0), (1000, None), (1900, 150.0), (3000, 0.0), (4000, 0.0)]
+    cycles = replay(cfg, r)
+    assert len(cycles) == 1 and cycles[0]["duration_s"] > 2500
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

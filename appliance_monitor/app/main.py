@@ -8,12 +8,16 @@ import time
 import unicodedata
 from pathlib import Path
 
+import statistics
+from datetime import datetime, timedelta, timezone
+
 import paho.mqtt.client as mqtt
 from aiohttp import ClientSession, ClientTimeout, web
 
 import discovery
 from engine import (DEFAULT_MSG_FINISH, DEFAULT_MSG_START, FINISHED, PRESETS,
-                    RUNNING, Appliance, render)
+                    RUNNING, Appliance, entry_from_info, render)
+from replay import replay
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("am")
@@ -26,7 +30,9 @@ PORT = int(os.environ.get("PORT", "8099"))
 DEV = os.environ.get("DEV") == "1"
 POLL_S = 5
 STATIC = Path(__file__).parent / "static"
-HISTORY_MAX = 50
+HISTORY_MAX = 200
+RUNTIME_SAVE_EVERY_S = 60
+DEFAULT_SETTINGS = {"price_per_kwh": 1.0, "currency": "zł"}
 
 
 # ---------- pliki ----------
@@ -111,12 +117,15 @@ class Monitor:
         self.mqtt = MqttOut(self)
         self.published = {}
         self.ha_ok = False
+        self.settings = dict(DEFAULT_SETTINGS)
+        self.last_rt_save = 0.0
 
     # -- trwałość
     def load(self):
         cfgs = load_json(DATA / "appliances.json", [])
         rt = load_json(DATA / "state.json", {})
         self.history = load_json(DATA / "history.json", {})
+        self.settings.update(load_json(DATA / "settings.json", {}))
         for c in cfgs:
             self.appliances[c["id"]] = Appliance(c, rt.get(c["id"]))
 
@@ -133,11 +142,38 @@ class Monitor:
     def hdr(self):
         return {"Authorization": f"Bearer {TOKEN}"}
 
-    async def ha_get(self, path):
-        async with self.session.get(f"{HA_BASE}{path}", headers=self.hdr()) as r:
+    async def ha_get(self, path, timeout=None):
+        kw = {"timeout": ClientTimeout(total=timeout)} if timeout else {}
+        async with self.session.get(f"{HA_BASE}{path}", headers=self.hdr(), **kw) as r:
             if r.status != 200:
                 raise RuntimeError(f"HTTP {r.status} dla {path}")
             return await r.json()
+
+    async def load_readings(self, entity, days):
+        """Historia czujnika z rejestratora HA jako [(t, W|None)], przedłużona do teraz."""
+        now = datetime.now(timezone.utc)
+        start = (now - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        cur = await self.ha_get(f"/states/{entity}")
+        unit = cur.get("attributes", {}).get("unit_of_measurement", "W")
+        factor = 1000.0 if unit == "kW" else 0.001 if unit == "mW" else 1.0
+        data = await self.ha_get(
+            f"/history/period/{start}?filter_entity_id={entity}&minimal_response&no_attributes",
+            timeout=90)
+        out = []
+        for row in (data[0] if data else []):
+            try:
+                t = datetime.fromisoformat(row.get("last_changed") or row["last_updated"]).timestamp()
+            except (KeyError, ValueError, TypeError):
+                continue
+            try:
+                v = float(row["state"]) * factor
+            except (ValueError, TypeError, KeyError):
+                v = None
+            out.append((t, v))
+        out.sort(key=lambda x: x[0])
+        if out and out[-1][0] < now.timestamp():
+            out.append((now.timestamp(), out[-1][1]))
+        return out
 
     async def ha_post(self, path, data):
         async with self.session.post(f"{HA_BASE}{path}", headers=self.hdr(), json=data) as r:
@@ -230,14 +266,16 @@ class Monitor:
                 log.info("%s: %s", a.cfg["name"], kind)
                 if kind == "finish":
                     h = self.history.setdefault(a.cfg["id"], [])
-                    h.append(a.last_cycle)
+                    h.append(entry_from_info(info))
                     del h[:-HISTORY_MAX]
                     self.save_history()
                 if kind in ("start", "finish"):
                     asyncio.create_task(self.notify(a, kind, info))
             self.publish_state(a, now)
-        if changed:
+        # w trakcie cyklu zapisujemy stan co minutę, żeby restart nie zgubił energii i wykresu
+        if changed or (any(a.state == RUNNING for a in apps) and now - self.last_rt_save >= RUNTIME_SAVE_EVERY_S):
             self.save_runtime()
+            self.last_rt_save = now
 
     # -- widok dla UI
     def view(self, a, now):
@@ -245,14 +283,19 @@ class Monitor:
         samples = list(a.samples)
         step = max(1, len(samples) // 240)
         samples = samples[::step]
-        running = a.state == RUNNING and a.cycle_start
+        running = a.state == RUNNING and a.cycle_start is not None
+        hist = self.history.get(c["id"], [])
+        recent = [h["duration_s"] for h in hist[-10:]]
         return {
             "id": c["id"], "cfg": c, "state": a.state, "power": a.power,
             "sensor_ok": a.sensor_ok(now),
             "elapsed_s": int(now - a.cycle_start) if running else None,
             "energy_wh": round(a.energy_wh, 1) if running else None,
             "finished_at": a.finished_at, "last_cycle": a.last_cycle,
-            "history": self.history.get(c["id"], [])[-5:][::-1],
+            # typowy czas cyklu (mediana ostatnich) do szacowania końca
+            "typical_s": int(statistics.median(recent)) if len(recent) >= 3 else None,
+            "history_count": len(hist),
+            "history": [{k: v for k, v in h.items() if k != "curve"} for h in hist[-5:][::-1]],
             "samples": [[int(t), round(p, 1)] for t, p in samples],
         }
 
@@ -314,8 +357,104 @@ async def api_list(request):
     now = time.time()
     return web.json_response({
         "appliances": [mon.view(a, now) for a in mon.appliances.values()],
-        "mqtt": mon.mqtt.connected, "ha_ok": mon.ha_ok,
+        "mqtt": mon.mqtt.connected, "ha_ok": mon.ha_ok, "settings": mon.settings,
     })
+
+
+def get_appliance(request):
+    a = request.app["mon"].appliances.get(request.match_info["id"])
+    if not a:
+        raise web.HTTPNotFound()
+    return a
+
+
+async def api_history(request):
+    mon = request.app["mon"]
+    a = get_appliance(request)
+    return web.json_response(mon.history.get(a.cfg["id"], [])[::-1])
+
+
+async def api_history_delete(request):
+    mon = request.app["mon"]
+    a = get_appliance(request)
+    try:
+        start = int(request.match_info["start"])
+    except ValueError:
+        raise web.HTTPBadRequest()
+    h = mon.history.get(a.cfg["id"], [])
+    kept = [e for e in h if e["start"] != start]
+    if len(kept) == len(h):
+        raise web.HTTPNotFound()
+    mon.history[a.cfg["id"]] = kept
+    mon.save_history()
+    return web.Response(status=204)
+
+
+def days_from(body, default=14):
+    try:
+        return min(max(int(body.get("days", default)), 1), 30)
+    except (TypeError, ValueError):
+        return default
+
+
+async def api_backfill(request):
+    """Uzupełnia historię cykli z rejestratora HA, przy bieżących ustawieniach urządzenia."""
+    mon = request.app["mon"]
+    a = get_appliance(request)
+    days = days_from(await request.json() if request.can_read_body else {})
+    try:
+        readings = await mon.load_readings(a.cfg["power_entity"], days)
+    except Exception as e:
+        raise web.HTTPBadGateway(text=f"Nie mogę pobrać historii z HA: {e}")
+    found = await asyncio.to_thread(replay, a.cfg, readings)
+    h = mon.history.setdefault(a.cfg["id"], [])
+    added = replaced = 0
+    for e in found:
+        same = next((x for x in h if abs(x["start"] - e["start"]) < 300), None)
+        if same is None:
+            h.append(e)
+            added += 1
+        elif not same.get("curve"):
+            h[h.index(same)] = e  # wpis sprzed wersji z wykresami dostaje pełną krzywą
+            replaced += 1
+    h.sort(key=lambda x: x["start"])
+    del h[:-HISTORY_MAX]
+    mon.save_history()
+    return web.json_response({"days": days, "found": len(found), "added": added, "updated": replaced})
+
+
+async def api_replay(request):
+    """Sprawdza (bez zapisu), ile cykli wykryją podane ustawienia na historii z HA."""
+    mon = request.app["mon"]
+    body = await request.json()
+    cfg = clean_cfg(body)
+    days = days_from(body)
+    try:
+        readings = await mon.load_readings(cfg["power_entity"], days)
+    except Exception as e:
+        raise web.HTTPBadGateway(text=f"Nie mogę pobrać historii z HA: {e}")
+    found = await asyncio.to_thread(replay, cfg, readings)
+    return web.json_response({
+        "days": days, "readings": len(readings),
+        "cycles": [{"start": e["start"], "duration_s": e["duration_s"], "energy_wh": e["energy_wh"]} for e in found],
+    })
+
+
+async def api_settings_get(request):
+    return web.json_response(request.app["mon"].settings)
+
+
+async def api_settings_put(request):
+    mon = request.app["mon"]
+    body = await request.json()
+    try:
+        price = min(max(float(body.get("price_per_kwh", 1.0)), 0.0), 100.0)
+    except (TypeError, ValueError):
+        raise web.HTTPBadRequest(text="Cena musi być liczbą.")
+    cur = str(body.get("currency") or "zł").strip()[:8] or "zł"
+    mon.settings = {"price_per_kwh": round(price, 4), "currency": cur}
+    save_json(DATA / "settings.json", mon.settings)
+    return web.json_response(mon.settings)
 
 
 async def api_options(request):
@@ -426,6 +565,12 @@ async def make_app():
     app.router.add_post("/api/appliances", api_create)
     app.router.add_put("/api/appliances/{id}", api_update)
     app.router.add_delete("/api/appliances/{id}", api_delete)
+    app.router.add_get("/api/appliances/{id}/history", api_history)
+    app.router.add_delete("/api/appliances/{id}/history/{start}", api_history_delete)
+    app.router.add_post("/api/appliances/{id}/backfill", api_backfill)
+    app.router.add_post("/api/replay", api_replay)
+    app.router.add_get("/api/settings", api_settings_get)
+    app.router.add_put("/api/settings", api_settings_put)
     app.router.add_get("/api/options", api_options)
     app.router.add_post("/api/test_notify", api_test_notify)
     return app
