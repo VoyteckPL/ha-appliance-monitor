@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.15.0
+- Kredyt na fotowoltaikę: wgraj harmonogram spłat z banku (PDF, nazwa z „harmonogram” lub „kredyt”) tym samym przyciskiem co faktury. Karta fotowoltaiki pokazuje, ile już wydałeś (wkład własny + spłacone raty), ile panele dały, ile brakuje do zwrotu, całkowity koszt z odsetkami i opłatami oraz zwrot przy obecnym tempie.
+
 ## 0.14.0
 - Rachunki: realny koszt pobranej kWh (z opłatami stałymi), prognoza rachunku na bieżący rok (na podstawie poprzedniego), szacunek salda depozytu z ostatnich 12 miesięcy.
 - Fotowoltaika: jaki procent produkcji zużywasz sam i jaki procent zużycia pokrywają panele (wykres miesięczny), najlepszy i najsłabszy miesiąc, ostrzeżenie o produkcji niższej o ponad 15% niż rok wcześniej.

@@ -153,7 +153,7 @@
   <div class="card" id="st_bar">
     <div class="grid2">
       <label>Okres<select id="st_period"></select></label>
-      <label>Dodaj faktury (PDF), zestawienie rozliczeń (CSV) z Energi lub produkcję z falownika (xlsx)<input type="file" id="b_file" accept="application/pdf,.csv,text/csv,.xlsx" multiple></label>
+      <label>Dodaj faktury (PDF), zestawienie rozliczeń (CSV) z Energi produkcję z falownika (xlsx) lub harmonogram kredytu (PDF)<input type="file" id="b_file" accept="application/pdf,.csv,text/csv,.xlsx" multiple></label>
     </div>
     <div id="b_msg" class="small"></div>
   </div>
@@ -791,6 +791,16 @@ function pvExtras(ms) {
     ${pvBox('accent', '🏆', `Najlepszy miesiąc: <b>${monthName(best.month)}</b> (${zl(best.benefit)}, ${pl(best.production)} kWh). Najsłabszy: <b>${monthName(worst.month)}</b> (${zl(worst.benefit)}).`)}
     ${drops.length ? pvBox('done', '⚠️', `Produkcja wyraźnie niższa niż rok wcześniej: ${drops.map(d => `<b>${monthName(d.m)}</b> (${Math.round(d.v * 100)}%)`).join(', ')}. Jeśli to nie pogoda, sprawdź zacienienie lub zabrudzenie paneli.`) : ''}`;
 }
+function loanBox(L, benefit, cost, perYear) {
+  if (!L) return '';
+  const own = Math.max(cost - L.amount, 0), spent = own + L.paid_total, total = own + L.total, net = benefit - spent;
+  const left = Math.max(total - benefit, 0), yrs = perYear > 0 ? left / perYear : 0;
+  const pl = v => Math.round(v).toLocaleString('pl-PL');
+  return pvBox(net >= 0 ? 'run' : 'done', '🏦', `<b>Z kredytem:</b> do dziś wydałeś na instalację <b>${zl(spent)}</b> (wkład własny ${zl(own)} + ${L.paid_n} rat z ${L.count} = ${zl(L.paid_total)}), a panele dały <b>${zl(benefit)}</b>. ` +
+    (net >= 0 ? `Jesteś już na plusie o <b>${zl(net)}</b>.` : `Brakuje jeszcze <b>${zl(-net)}</b> do zwrotu tego, co wpłaciłeś.`) +
+    ` Całkowity koszt z kredytem (odsetki i opłaty razem ${zl(L.cost)}) to <b>${zl(total)}</b>, więc pełny zwrot przy obecnym tempie za ok. <b>${yrs.toFixed(1).replace('.', ',')} roku</b>.` +
+    `<div class="small muted" style="margin-top:4px">Do spłaty kredytu zostało ${zl(L.balance)} kapitału, następna rata ${zl(L.next_amount)} ${L.next ? esc(L.next) : ''}. Ostatnia rata ${esc(L.last)}. <a href="#" id="loan_del">Usuń harmonogram</a></div>`);
+}
 function exactSection(r) {
   const t = r.total, ms = r.months;
   if (!ms.length) return `<div class="banner">Są statystyki produkcji z HA, ale nie pokrywają się z miesiącami z fakturami PDF.</div>`;
@@ -798,6 +808,7 @@ function exactSection(r) {
   const f = ms[0], l = ms[ms.length - 1], pl = v => Math.round(v).toLocaleString('pl-PL');
   return `${pvBox('run', '☀️', `Fotowoltaika dała Ci od ${monthName(f.month)} <b>${zl(t.benefit)}</b> (średnio ${zl(t.benefit / t.months)} miesięcznie).`)}
     ${roiBox(t.benefit, t.cost, t.avg_month)}
+    ${loanBox(r.loan, t.benefit, t.cost, t.avg_month * 12)}
     <details style="margin:8px 0"><summary><b>Ile zarobiłeś: szczegóły</b></summary>
     ${r.missing && r.missing.length ? `<div class="banner">Brak faktur PDF lub produkcji dla: ${esc(r.missing.map(monthName).join(', '))}. Zysk za te miesiące nie jest wliczony.</div>` : ''}
     ${pvBox('run', '🏠', `Wyprodukowałeś <b>${pl(t.production)} kWh</b>, sam zużyłeś <b>${pl(t.self)} kWh</b> (nie kupiłeś ich: <b>${zl(t.avoided)}</b>).`)}
@@ -812,7 +823,9 @@ async function pvCard() {
   let r;
   try { r = await api('api/pv'); } catch (e) { return statCard('Fotowoltaika: ile zarobiłeś', `<div class="banner">${esc(e.message)}</div>`); }
   const t = (r.estimate && r.estimate.total) || {};
+  if (r.exact) r.exact.loan = r.loan;
   let html = r.exact ? exactSection(r.exact) : annualSection(r.annual, r.has_production);
+  if (!r.exact && r.loan && r.annual) html += loanBox(r.loan, r.annual.total.benefit, r.annual.total.cost, r.annual.total.per_year);
   if (r.exact_error) html += `<div class="banner">${esc(r.exact_error)}</div>`;
   if (r.exact && r.annual) html += `<details style="margin:10px 0"><summary class="small muted">Zysk rok po roku (z rocznej produkcji)</summary>${annualSection(r.annual, true)}</details>`;
   html += `<details style="margin:10px 0"><summary class="small muted">Szacunek porównawczy z samych faktur (zaniżony)</summary>` + estSection(r.estimate) + `</details>`;
@@ -836,6 +849,7 @@ function pvSetup(r) {
     <button class="primary" id="pv_save">Zapisz i policz</button> <span id="pv_err" class="small" style="color:var(--danger)"></span></div>`;
 }
 async function pvWire() {
+  const ld = $('#loan_del'); if (ld) ld.onclick = async e => { e.preventDefault(); if (confirm('Usunąć wgrany harmonogram kredytu?')) { await api('api/loan', 'DELETE'); renderStats(); } };
   const form = $('#pv_form');
   const ed = $('#pv_edit'); if (ed) ed.onclick = e => { e.preventDefault(); if (form) form.hidden = false; };
   const ps = $('#pv_start_save'); if (ps) ps.onclick = async () => {
@@ -1003,6 +1017,13 @@ $('#b_file').onchange = async () => {
     const f = files[i];
     $('#b_msg').textContent = `Wczytuję ${i + 1} z ${files.length}…`;
     try {
+      if (/harmonogram|kredyt/i.test(f.name) && /\.pdf$/i.test(f.name)) {
+        const rl = await fetch('api/loan', {method: 'POST', headers: {'Content-Type': 'application/pdf'}, body: await f.arrayBuffer()});
+        if (!rl.ok) throw new Error(await rl.text());
+        const jl = await rl.json();
+        csvMsg += `${csvMsg ? '\n' : ''}✔ Harmonogram kredytu: ${jl.installments} rat, ${jl.amount.toLocaleString('pl-PL')} zł`;
+        continue;
+      }
       if (/\.xlsx$/i.test(f.name)) {
         const rx = await fetch('api/pv/production', {method: 'POST', headers: {'Content-Type': 'application/octet-stream'}, body: await f.arrayBuffer()});
         if (!rx.ok) throw new Error(await rx.text());

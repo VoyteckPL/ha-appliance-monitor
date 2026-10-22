@@ -1,5 +1,5 @@
 name: Appliance Monitor
-version: "0.14.0"
+version: "0.15.0"
 slug: appliance_monitor
 description: Wykrywa start i koniec cyklu pralki, suszarki, zmywarki itp. na podstawie poboru mocy z gniazdka
 url: https://github.com/VoyteckPL/ha-appliance-monitor

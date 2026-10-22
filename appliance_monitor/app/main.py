@@ -17,6 +17,7 @@ from aiohttp import ClientSession, ClientTimeout, WSMsgType, web
 import discovery
 import bills as billslib
 import pricing
+import loan as loanlib
 import pvgain
 import programs
 from engine import (CFG_DEFAULTS, DEFAULT_MSG_FINISH, DEFAULT_MSG_REMIND, DEFAULT_MSG_START,
@@ -166,6 +167,7 @@ class Monitor:
         self.bills = self.migrate_bills(load_json(DATA / "bills.json", {}))
         self.bills_csv = load_json(DATA / "bills_csv.json", {})
         self.pv_prod = load_json(DATA / "pv_production.json", {})
+        self.loan = load_json(DATA / "loan.json", None)
         for c in cfgs:
             for k, v in CFG_DEFAULTS.items():  # urządzenia zapisane w starszych wersjach
                 c.setdefault(k, v)
@@ -815,7 +817,8 @@ async def api_pv(request):
     ent = mon.settings.get("pv_entity")
     cost = float(mon.settings.get("pv_cost") or 0)
     months = billslib.by_month(mon.bills.values())
-    out = {"configured": bool(ent), "annual": pvgain.annual(mon.pv_prod, months, cost, mon.settings.get("pv_start") or None),
+    out = {"loan": loanlib.summary(mon.loan, datetime.now(ZoneInfo(mon.settings.get("timezone") or "Europe/Warsaw")).strftime("%Y-%m-%d")) if mon.loan else None,
+           "configured": bool(ent), "annual": pvgain.annual(mon.pv_prod, months, cost, mon.settings.get("pv_start") or None),
            "has_production": bool(mon.pv_prod), "estimate": pvgain.estimate(mon.bills_csv, months, mon.settings.get("pv_start") or None, cost)}
     prod = {k: v for k, v in mon.pv_prod.items() if len(k) == 7}  # miesięczny eksport z aplikacji falownika
     if ent:
@@ -830,6 +833,36 @@ async def api_pv(request):
         out["exact"] = pvgain.compute(prod, months, cost)
         out["first_data"] = min(prod)
     return web.json_response(out)
+
+
+async def api_loan_post(request):
+    """Harmonogram spłat kredytu (PDF z banku): do policzenia realnego kosztu i zwrotu instalacji."""
+    mon = request.app["mon"]
+    data = await request.read()
+    if not data.startswith(b"%PDF"):
+        raise web.HTTPBadRequest(text="To nie jest plik PDF.")
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "pdftotext", "-layout", "-", "-", stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+        out, _ = await asyncio.wait_for(proc.communicate(data), 30)
+        mon.loan = loanlib.parse_schedule(out.decode("utf-8", "replace"))
+    except ValueError as e:
+        raise web.HTTPBadRequest(text=str(e))
+    except (OSError, asyncio.TimeoutError):
+        raise web.HTTPBadGateway(text="Nie udało się odczytać PDF-a (brak pdftotext?).")
+    save_json(DATA / "loan.json", mon.loan)
+    return web.json_response({"installments": len(mon.loan["rows"]), "amount": mon.loan["amount"]})
+
+
+async def api_loan_delete(request):
+    mon = request.app["mon"]
+    mon.loan = None
+    try:
+        (DATA / "loan.json").unlink()
+    except OSError:
+        pass
+    return web.json_response({"ok": True})
 
 
 async def api_pv_production(request):
@@ -1091,6 +1124,8 @@ async def make_app():
     app.router.add_post("/api/bills", api_bills_post)
     app.router.add_post("/api/bills/csv", api_bills_csv)
     app.router.add_post("/api/pv/production", api_pv_production)
+    app.router.add_post("/api/loan", api_loan_post)
+    app.router.add_delete("/api/loan", api_loan_delete)
     app.router.add_delete("/api/bills/{month}", api_bills_delete)
     app.router.add_get("/api/settings", api_settings_get)
     app.router.add_put("/api/settings", api_settings_put)
