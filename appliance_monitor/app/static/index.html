@@ -750,8 +750,10 @@ function exactSection(r) {
   if (!ms.length) return `<div class="banner">Są statystyki produkcji z HA, ale nie pokrywają się z miesiącami z fakturami PDF.</div>`;
   pvData = r;
   const f = ms[0], l = ms[ms.length - 1], pl = v => Math.round(v).toLocaleString('pl-PL');
-  return `<div class="sec">Dokładnie, z licznika falownika (od ${monthName(f.month)})</div>
+  return `<div class="sec" style="margin-top:0">Zysk miesiąc po miesiącu (produkcja z falownika + faktury, od ${monthName(f.month)})</div>
     ${pvBox('run', '☀️', `Od ${monthName(f.month)} do ${monthName(l.month)} (${t.months} mies.) fotowoltaika dała Ci <b>${zl(t.benefit)}</b>, średnio ${zl(t.benefit / t.months)} miesięcznie.`)}
+    ${roiBox(t.benefit, t.cost, t.avg_month)}
+    ${t.months < 12 ? '' : ''}${r.missing && r.missing.length ? `<div class="banner">Brak faktur PDF lub produkcji dla: ${esc(r.missing.map(monthName).join(', '))}. Zysk za te miesiące nie jest wliczony.</div>` : ''}
     ${pvBox('run', '🏠', `Wyprodukowałeś <b>${pl(t.production)} kWh</b>, z tego sam zużyłeś <b>${pl(t.self)} kWh</b>. Dzięki temu nie kupiłeś ich z sieci: <b>${zl(t.avoided)}</b> oszczędności.`)}
     ${pvBox('run', '🔌', `Oddałeś do sieci <b>${pl(t.export)} kWh</b> i dostałeś za to <b>${zl(t.deposit)}</b> w depozycie.`)}
     <div id="st_pvex">
@@ -763,9 +765,10 @@ async function pvCard() {
   let r;
   try { r = await api('api/pv'); } catch (e) { return statCard('Fotowoltaika: ile zarobiłeś', `<div class="banner">${esc(e.message)}</div>`); }
   const t = (r.estimate && r.estimate.total) || {};
-  let html = annualSection(r.annual, r.has_production) + `<details style="margin:10px 0"><summary class="small muted">Szacunek porównawczy z samych faktur (zaniżony)</summary>` + estSection(r.estimate) + `</details>`;
-  if (r.exact) html += exactSection(r.exact);
-  else if (r.exact_error) html += `<div class="banner">${esc(r.exact_error)}</div>`;
+  let html = r.exact ? exactSection(r.exact) : annualSection(r.annual, r.has_production);
+  if (r.exact_error) html += `<div class="banner">${esc(r.exact_error)}</div>`;
+  if (r.exact && r.annual) html += `<details style="margin:10px 0"><summary class="small muted">Zysk rok po roku (z rocznej produkcji)</summary>${annualSection(r.annual, true)}</details>`;
+  html += `<details style="margin:10px 0"><summary class="small muted">Szacunek porównawczy z samych faktur (zaniżony)</summary>` + estSection(r.estimate) + `</details>`;
   html += `<div class="grid2" style="align-items:end;margin-top:8px"><label>Koszt instalacji (zł)<input type="number" id="pv_cost2" min="0" step="100" value="${state.settings.pv_cost || ''}"></label>
       <div><button id="pv_cost_save">Zapisz koszt</button> <span id="pv_cost_err" class="small" style="color:var(--danger)"></span></div></div>`;
   html += `<div class="sec">Dokładny zysk z falownika</div>` + (r.configured ? `<a href="#" id="pv_edit">Zmień licznik produkcji</a>` : `<div class="small muted" style="margin-bottom:8px">Wybierz licznik produkcji z falownika, a policzę też dokładny zysk od momentu, od którego HA go zapisuje.</div>`) + pvSetup(r.configured ? r : null);

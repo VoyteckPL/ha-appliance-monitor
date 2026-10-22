@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.13.1
+- Eksport miesięczny produkcji z Solarmana (kolumna „Wytwarzanie energii”, czas w formacie 2023/5) jest rozpoznawany. Wgrany daje zysk miesiąc po miesiącu bez licznika w HA; licznik z HA dopełnia świeże miesiące. Rok po roku i stary szacunek zwinięte pod spodem.
+
 ## 0.13.0
 - Zysk fotowoltaiki rok po roku z eksportu produkcji z aplikacji falownika (xlsx, np. Solarman „Statystyki roczne”) i faktur: (produkcja − oddane) × cena zakupu + depozyt. Nie zakłada niczego o zużyciu sprzed paneli, basen liczy się jako zwykłe zużycie własne. Wgrywasz ten sam przyciskiem co faktury.
 - Eksport miesięczny z tej samej aplikacji też jest przyjmowany i daje dokładny wykres miesięczny.

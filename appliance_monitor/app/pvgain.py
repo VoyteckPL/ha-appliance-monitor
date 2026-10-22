@@ -40,7 +40,7 @@ def parse_production(raw):
     if not rows:
         raise ValueError("Plik jest pusty.")
     head = {k: v.lower() for k, v in rows[0].items()}
-    prod_col = next((k for k, v in head.items() if v.startswith("produkcj")), None)
+    prod_col = next((k for k, v in head.items() if (v.startswith("produkcj") or v.startswith("wytwarzani"))), None)
     time_col = next((k for k, v in head.items() if "czas" in v and "stref" not in v), None)
     if not prod_col or not time_col:
         raise ValueError("Nie znalazłem kolumn z czasem i produkcją (kWh). To eksport „Statystyki roczne/miesięczne” z aplikacji falownika?")

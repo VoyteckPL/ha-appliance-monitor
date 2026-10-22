@@ -817,16 +817,18 @@ async def api_pv(request):
     months = billslib.by_month(mon.bills.values())
     out = {"configured": bool(ent), "annual": pvgain.annual(mon.pv_prod, months, cost, mon.settings.get("pv_start") or None),
            "has_production": bool(mon.pv_prod), "estimate": pvgain.estimate(mon.bills_csv, months, mon.settings.get("pv_start") or None, cost)}
+    prod = {k: v for k, v in mon.pv_prod.items() if len(k) == 7}  # miesięczny eksport z aplikacji falownika
     if ent:
         try:
-            prod = await mon.pv_production(ent)
-            if not prod:
+            ha = await mon.pv_production(ent)
+            if not ha and not prod:
                 raise RuntimeError("HA nie ma długoterminowych statystyk dla tej encji (musi być licznik energii w kWh)")
-            prod = {**{k: v for k, v in mon.pv_prod.items() if len(k) == 7}, **prod}
-            out["exact"] = pvgain.compute(prod, months, cost)
-            out["first_data"] = min(prod)
+            prod = {**prod, **(ha or {})}
         except Exception as e:
             out["exact_error"] = f"Nie mogę pobrać statystyk produkcji z HA: {e}"
+    if prod:
+        out["exact"] = pvgain.compute(prod, months, cost)
+        out["first_data"] = min(prod)
     return web.json_response(out)
 
 
