@@ -19,6 +19,14 @@
   h1 { font-size:20px; margin:0; display:flex; align-items:center; gap:10px; }
   .hbtns { display:flex; gap:8px; }
   [hidden] { display:none !important; }
+  #stats { padding-bottom:190px; }
+  .hit { fill:transparent; cursor:pointer; }
+  .hit:hover { fill:var(--accent); fill-opacity:.10; }
+  .hit.sel { fill:var(--accent); fill-opacity:.16; }
+  #st_tip { position:fixed; z-index:50; pointer-events:none; background:var(--text); color:var(--bg); padding:7px 10px; border-radius:8px; font-size:12.5px; line-height:1.45; box-shadow:0 4px 14px rgba(0,0,0,.25); max-width:260px; }
+  #st_pick { position:fixed; left:0; right:0; bottom:0; z-index:40; background:var(--card); border-top:1px solid var(--line); box-shadow:0 -6px 20px rgba(0,0,0,.18); padding:12px 16px 16px; }
+  #st_pick .in { max-width:900px; margin:0 auto; }
+  #st_pick .pk-h { display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; }
   main { max-width:900px; margin:0 auto; padding:8px 16px 40px; display:grid; gap:12px; }
   button { font:inherit; cursor:pointer; border:1px solid var(--line); background:var(--card); color:var(--text); padding:8px 14px; border-radius:10px; }
   button:disabled { opacity:.55; cursor:default; }
@@ -150,6 +158,8 @@
     <div id="b_msg" class="small"></div>
   </div>
   <div id="st_body"></div>
+  <div id="st_tip" hidden></div>
+  <div id="st_pick" hidden></div>
 </main>
 
 <!-- edycja urządzenia -->
@@ -548,14 +558,14 @@ const MON = ['sty','lut','mar','kwi','maj','cze','lip','sie','wrz','paź','lis',
 const monthName = m => MON[+m.slice(5) - 1] + ' ' + m.slice(0, 4);
 const CW = 640, CH = 170, PL = 38, PB = 22, PT = 14;
 function niceMax(v) { const p = Math.pow(10, Math.floor(Math.log10(v || 1))); for (const m of [1, 2, 2.5, 5, 10]) if (v <= m * p) return m * p; return 10 * p; }
-function chartFrame(labels, max, body) {
+function chartFrame(labels, max, body, months) {
   const iw = CW - PL - 6, ih = CH - PT - PB;
   const grid = [0, .5, 1].map(f => { const y = PT + ih * (1 - f);
     return `<line x1="${PL}" x2="${CW - 6}" y1="${y}" y2="${y}" stroke="var(--line)"/><text x="${PL - 5}" y="${y + 4}" text-anchor="end" fill="var(--muted)" font-size="10">${Math.round(max * f * 100) / 100}</text>`; }).join('');
   const slot = iw / labels.length;
   const every = Math.max(1, Math.ceil(30 / slot));  // przy gęstych wykresach pokazujemy co którąś etykietę
   const xl = labels.map((l, i) => i % every ? '' : `<text x="${PL + slot * (i + .5)}" y="${CH - 6}" text-anchor="middle" fill="var(--muted)" font-size="10">${esc(l)}</text>`).join('');
-  return `<svg viewBox="0 0 ${CW} ${CH}" style="width:100%;height:auto;display:block" role="img">${grid}${xl}${body(PL, PT, iw, ih, slot)}</svg>`;
+  return `<svg viewBox="0 0 ${CW} ${CH}" style="width:100%;height:auto;display:block" role="img">${grid}${xl}${body(PL, PT, iw, ih, slot)}${months ? months.map((m, i) => `<rect class="hit" data-m="${m}" x="${(PL + slot * i).toFixed(1)}" y="${PT}" width="${slot.toFixed(1)}" height="${ih}"/>`).join('') : ''}</svg>`;
 }
 const monthLabels = bs => { const multi = new Set(bs.map(b => b.month.slice(0, 4))).size > 1; return bs.map(b => MON[+b.month.slice(5) - 1] + (multi ? " '" + b.month.slice(2, 4) : '')); };
 function barChart(bs, series, stacked) {
@@ -571,7 +581,7 @@ function barChart(bs, series, stacked) {
       const y = y0 + ih - h - (stacked ? acc / max * ih : 0); acc += v;
       return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(h, 0).toFixed(1)}" rx="2" fill="${s.c}"><title>${monthName(b.month)} · ${s.n}: ${s.t(v)}</title></rect>`;
     }).join('');
-  }).join(''));
+  }).join(''), bs.map(b => b.month));
 }
 function lineChart(bs, series) {
   const labels = monthLabels(bs);
@@ -580,7 +590,7 @@ function lineChart(bs, series) {
     const pts = bs.map((b, i) => [x0 + slot * (i + .5), y0 + ih * (1 - s.f(b) / max), b]);
     return `<polyline fill="none" stroke="${s.c}" stroke-width="2" points="${pts.map(p => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ')}"/>` +
       pts.map(p => `<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="3.5" fill="${s.c}"><title>${monthName(p[2].month)} · ${s.n}: ${s.t(s.f(p[2]))}</title></circle>`).join('');
-  }).join(''));
+  }).join(''), bs.map(b => b.month));
 }
 const legend = items => `<div class="small muted" style="display:flex;gap:14px;flex-wrap:wrap;margin:2px 0 4px">` +
   items.map(([c, n]) => `<span><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:${c};margin-right:5px"></span>${n}</span>`).join('') + '</div>';
@@ -620,6 +630,53 @@ function chartsHtml(bs, all) {
     lineChart(bs, [{n: 'zakup', c: 'var(--danger)', f: b => b.import_price, t: v => v.toFixed(3) + ' ' + C}, {n: 'oddana kWh', c: 'var(--run)', f: b => b.export_price, t: v => v.toFixed(3) + ' ' + C}]) + yoy);
 }
 const VATK = 1.23;
+function monthInfo(m) {
+  const b = allBills.find(x => x.month === m), h = histCsv.find(x => x.month === m);
+  return {m, b, h, gross: h ? h.gross : (b ? b.gross : null), kwh: h ? h.billed_kwh : (b ? b.billed_kwh : null)};
+}
+function tipHtml(m) {
+  const i = monthInfo(m), t = `<b>${monthName(m)}</b>`;
+  if (i.b) return `${t}<br>Pobrano ${Math.round(i.b.import_kwh)} kWh · oddano ${Math.round(i.b.export_kwh)} kWh<br>Do zapłaty <b>${zl(i.b.to_pay)}</b>` + (i.b.deposit_used > 0 ? ` (depozyt −${zl(i.b.deposit_used)})` : '');
+  if (i.h) return `${t}<br>Faktura ${zl(i.h.gross)} · ${Math.round(i.h.billed_kwh)} kWh`;
+  return t;
+}
+function pickHtml(m) {
+  const i = monthInfo(m), y = (+m.slice(0, 4) - 1) + m.slice(4), p = monthInfo(y), L = [];
+  if (i.b) {
+    const b = i.b;
+    L.push(`Pobrano z sieci <b>${Math.round(b.import_kwh)} kWh</b>, oddano do sieci <b>${Math.round(b.export_kwh)} kWh</b>.`);
+    L.push(`Po zbilansowaniu godzinowym rozliczono <b>${Math.round(b.billed_kwh)} kWh</b>.`);
+    L.push(`Faktura <b>${zl(b.gross)}</b>${b.deposit_used > 0 ? `, z depozytu odliczono ${zl(b.deposit_used)}` : ''}, do zapłaty <b>${zl(b.to_pay)}</b>.`);
+    L.push(`Opłaty stałe ok. ${zl(b.fixed_net * VATK)}. Cena zakupu ${b.import_price.toFixed(3).replace('.', ',')} zł/kWh` + (b.export_price > 0 ? `, wartość oddanej kWh ${b.export_price.toFixed(3).replace('.', ',')} zł.` : '.'));
+  } else if (i.h) {
+    L.push(`Wartość faktur <b>${zl(i.h.gross)}</b>, rozliczone <b>${Math.round(i.h.billed_kwh)} kWh</b> (z zestawienia CSV).`);
+    L.push(`Szczegółów poboru, oddania i depozytu nie ma, bo nie wgrano faktury PDF z tego miesiąca.`);
+  } else L.push('Brak danych za ten miesiąc.');
+  if (p.gross != null && i.gross != null && p.gross > 0) {
+    const d = i.gross - p.gross, pc = Math.round(d / p.gross * 100);
+    L.push(`Rok wcześniej (${monthName(y)}): ${zl(p.gross)}, czyli ${d >= 0 ? 'o ' + zl(d) + ' więcej' : 'o ' + zl(-d) + ' mniej'} (${pc >= 0 ? '+' : ''}${pc}%).`);
+  }
+  return `<div class="in"><div class="pk-h"><b>${monthName(m)}</b><button id="pk_x" aria-label="Zamknij">✕</button></div>` + L.map(x => `<div class="small" style="margin:3px 0">${x}</div>`).join('') + '</div>';
+}
+function markSel(m) { document.querySelectorAll('#st_body .hit').forEach(r => r.classList.toggle('sel', r.dataset.m === m)); }
+(function wireCharts() {
+  const body = $('#st_body'), tip = $('#st_tip');
+  body.addEventListener('mousemove', e => {
+    const r = e.target.closest && e.target.closest('.hit');
+    if (!r) { tip.hidden = true; return; }
+    tip.innerHTML = tipHtml(r.dataset.m); tip.hidden = false;
+    const w = tip.offsetWidth, x = Math.min(e.clientX + 14, innerWidth - w - 8);
+    tip.style.left = Math.max(8, x) + 'px'; tip.style.top = (e.clientY + 16) + 'px';
+  });
+  body.addEventListener('mouseleave', () => tip.hidden = true);
+  body.addEventListener('click', e => {
+    const r = e.target.closest && e.target.closest('.hit');
+    if (!r) return;
+    tip.hidden = true; state.selMonth = r.dataset.m; markSel(state.selMonth);
+    const pick = $('#st_pick'); pick.innerHTML = pickHtml(state.selMonth); pick.hidden = false;
+    $('#pk_x').onclick = () => { pick.hidden = true; state.selMonth = null; markSel(null); };
+  });
+})();
 function historyMonths() {
   // CSV ma kompletne sumy (uwzględnia korekty i wszystkie faktury miesiąca), PDF uzupełnia tylko miesiące bez CSV
   const m = new Map(allBills.map(b => [b.month, {month: b.month, gross: b.gross, kwh: b.billed_kwh, src: 'pdf'}]));
@@ -632,7 +689,7 @@ function histBars(ms, key, color, fmt) {
   return chartFrame(labels, max, (x0, y0, iw, ih, slot) => ms.map((m, i) => {
     const h = m[key] / max * ih, bw = Math.max(slot * .8, 1.5);
     return `<rect x="${(x0 + slot * i + (slot - bw) / 2).toFixed(1)}" y="${(y0 + ih - h).toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" fill="${color}"><title>${monthName(m.month)}: ${fmt(m[key])}</title></rect>`;
-  }).join(''));
+  }).join(''), ms.map(m => m.month));
 }
 function historyCard() {
   const ms = historyMonths();
@@ -708,6 +765,7 @@ async function renderStats() {
     if (!confirm('Usunąć fakturę z ' + monthName(b.dataset.bd) + '?')) return;
     await api('api/bills/' + b.dataset.bd, 'DELETE'); renderStats();
   });
+  if (state.selMonth) markSel(state.selMonth);
   const rows = await deviceStats(new Date(st.from + '-01T00:00:00').getTime() / 1000);
   if (rows.some(x => x.n) && $('#st_dev')) {
     const g = 'grid-template-columns:1.4fr .7fr 1fr 1fr';
@@ -721,7 +779,7 @@ $('#st_period').onchange = () => { state.statsPeriod = $('#st_period').value; tr
 try { state.statsPeriod = localStorage.getItem('am_period') || 'all'; } catch (e) { state.statsPeriod = 'all'; }
 function showView(v) {
   const st = v === 'stats';
-  $('#list').hidden = st; $('#stats').hidden = !st; $('#add').hidden = st;
+  $('#list').hidden = st; $('#stats').hidden = !st; if (!st) { $('#st_pick').hidden = true; $('#st_tip').hidden = true; } $('#add').hidden = st;
   $('#statsbtn').textContent = st ? '← Urządzenia' : '📊 Statystyki';
   document.querySelector('h1').lastChild.textContent = st ? 'Statystyki prądu' : 'Urządzenia';
   if (st) renderStats().catch(e => { $('#st_body').innerHTML = `<div class="banner">${esc(e.message)}</div>`; });

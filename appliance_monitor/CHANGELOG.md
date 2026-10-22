@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.10.0
+- Interaktywne wykresy w statystykach: po najechaniu na miesiąc podpowiedź z danymi, po kliknięciu (lub dotknięciu) panel ze szczegółami miesiąca i porównaniem do tego samego miesiąca rok wcześniej.
+
 ## 0.9.1
 - Noty odsetkowe są pomijane z czytelnym komunikatem (jak korekty).
 - Faktury bez pozycji energii (same opłaty) nie powodują błędu odczytu.
