@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.8.0
+- Import zestawienia rozliczeń z Energa 24 (CSV): cała historia kwot faktur i rozliczonych kWh od początku umowy, wykresy miesięczne i tabela rok po roku. Faktury PDF z danymi szczegółowymi mają pierwszeństwo przed danymi z CSV.
+
 ## 0.7.0
 - Osobny ekran „📊 Statystyki” (zamiast okna): filtr okresu (wszystkie, 12 / 6 miesięcy, wybrany rok), wgrywanie faktur, podsumowanie prostym językiem, wykresy (płatności, pobór i oddawanie, ceny, rok do roku), koszt urządzeń w okresie, tabela faktur i podsumowanie roczne.
 

@@ -116,3 +116,46 @@ def stats(bills):
         "last": {"month": last["month"], "to_pay": last["to_pay"], "gross": last["gross"],
                  "import_price": last["import_price"], "export_price": last["export_price"]},
     }
+
+
+def parse_csv(text):
+    """Zestawienie rozliczeń z Energa 24 (CSV) -> {miesiąc: {month, gross, billed_kwh, source}}.
+    Dla każdego okresu bierze najnowszy dokument (korekta wygrywa z fakturą), zużycie z faktury rozliczeniowej,
+    a okresy dłuższe/krótsze niż miesiąc rozdziela na miesiące proporcjonalnie do dni."""
+    import csv
+    import io
+    from datetime import date, timedelta
+    rows = list(csv.DictReader(io.StringIO(text.lstrip("﻿")), delimiter=";"))
+    if not rows or "Nr faktury" not in rows[0] or "Data od" not in rows[0]:
+        raise ValueError("To nie wygląda na zestawienie rozliczeń z Energa 24.")
+    fl = lambda s: float((s or "0").replace(" ", "").replace(",", "."))
+    best, kwh = {}, {}
+    for r in rows:
+        if not r.get("Data od") or not r.get("Data do"):
+            continue  # noty odsetkowe
+        kind = r["Nr faktury"].split("/")[1] if "/" in r["Nr faktury"] else ""
+        if kind not in ("FES", "KES"):
+            continue
+        k = (r["Data od"], r["Data do"])
+        key = (r["Data wystawienia"], r["Nr faktury"])
+        if k not in best or key > best[k][0]:
+            best[k] = (key, fl(r["Kwota faktury"]))
+        if kind == "FES":
+            kwh[k] = fl(r["Zużycie całkowite"])
+    out = {}
+    for (a, b), (_, amt) in best.items():
+        d0, d1 = date.fromisoformat(a), date.fromisoformat(b)
+        days = max((d1 - d0).days, 1)
+        # „Data od” to dzień poprzedniego odczytu: przy odczycie 1. dnia okres zaczyna się nim,
+        # przy odczycie na koniec miesiąca (od 2024) dzień później
+        d = d0 if d0.day == 1 else d0 + timedelta(days=1)
+        stop = d1 if d0.day == 1 else d1 + timedelta(days=1)
+        while d < stop:
+            m = f"{d.year}-{d.month:02d}"
+            rec = out.setdefault(m, {"month": m, "gross": 0.0, "billed_kwh": 0.0, "source": "csv"})
+            rec["gross"] += amt / days
+            rec["billed_kwh"] += kwh.get((a, b), 0.0) / days
+            d += timedelta(days=1)
+    for rec in out.values():
+        rec["gross"], rec["billed_kwh"] = round(rec["gross"], 2), round(rec["billed_kwh"], 1)
+    return out

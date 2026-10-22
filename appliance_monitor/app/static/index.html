@@ -145,7 +145,7 @@
   <div class="card" id="st_bar">
     <div class="grid2">
       <label>Okres<select id="st_period"></select></label>
-      <label>Dodaj faktury (PDF z Energi)<input type="file" id="b_file" accept="application/pdf" multiple></label>
+      <label>Dodaj faktury (PDF) lub zestawienie rozliczeń (CSV) z Energi<input type="file" id="b_file" accept="application/pdf,.csv,text/csv" multiple></label>
     </div>
     <div id="b_msg" class="small"></div>
   </div>
@@ -619,6 +619,32 @@ function chartsHtml(bs, all) {
     lineChart(bs, [{n: 'zakup', c: 'var(--danger)', f: b => b.import_price, t: v => v.toFixed(3) + ' ' + C}, {n: 'oddana kWh', c: 'var(--run)', f: b => b.export_price, t: v => v.toFixed(3) + ' ' + C}]) + yoy);
 }
 const VATK = 1.23;
+function historyMonths() {
+  const m = new Map(histCsv.map(h => [h.month, {month: h.month, gross: h.gross, kwh: h.billed_kwh, src: 'csv'}]));
+  allBills.forEach(b => m.set(b.month, {month: b.month, gross: b.gross, kwh: b.billed_kwh, src: 'pdf'}));
+  return [...m.values()].sort((a, b) => a.month.localeCompare(b.month));
+}
+function histBars(ms, key, color, fmt) {
+  const labels = ms.map(m => m.month.endsWith('-01') ? m.month.slice(0, 4) : '');
+  const max = niceMax(Math.max(...ms.map(m => m[key])));
+  return chartFrame(labels, max, (x0, y0, iw, ih, slot) => ms.map((m, i) => {
+    const h = m[key] / max * ih, bw = Math.max(slot * .8, 1.5);
+    return `<rect x="${(x0 + slot * i + (slot - bw) / 2).toFixed(1)}" y="${(y0 + ih - h).toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" fill="${color}"><title>${monthName(m.month)}: ${fmt(m[key])}</title></rect>`;
+  }).join(''));
+}
+function historyCard() {
+  const ms = historyMonths();
+  if (!ms.length) return '';
+  const C = state.settings.currency, y = {};
+  ms.forEach(m => { const o = y[m.month.slice(0, 4)] || (y[m.month.slice(0, 4)] = {n: 0, gross: 0, kwh: 0}); o.n++; o.gross += m.gross; o.kwh += m.kwh; });
+  const ks = Object.keys(y).sort().reverse(), g = 'grid-template-columns:.7fr .6fr 1.2fr 1.1fr 1.1fr';
+  const rows = ks.map(k => `<div class="crow" style="${g}"><b>${k}</b><span>${y[k].n}</span><b>${zl(y[k].gross)}</b><span>${Math.round(y[k].kwh).toLocaleString('pl-PL')} kWh</span><span>${zl(y[k].gross / y[k].n)}</span></div>`).join('');
+  return statCard(`Cała historia (${monthName(ms[0].month)} – ${monthName(ms[ms.length - 1].month)})`,
+    `<div class="sec" style="margin-top:0">Wartość faktur miesięcznie</div>${histBars(ms, 'gross', 'var(--accent)', v => zl(v))}` +
+    `<div class="sec">Rozliczone kWh miesięcznie</div>${histBars(ms, 'kwh', 'var(--done)', v => Math.round(v) + ' kWh')}` +
+    `<div class="sec">Rok po roku</div><div class="cycles" style="max-height:none"><div class="crow h muted small" style="${g}"><span>Rok</span><span>Mies.</span><span>Wartość faktur</span><span>Rozliczone</span><span>Średnio / mies.</span></div>${rows}</div>` +
+    `<div class="hint">Wartość faktury to kwota przed odliczeniem depozytu z oddanej energii. „Rozliczone kWh” to energia z sieci po zbilansowaniu godzinowym, więc po założeniu paneli jest niższa od realnego poboru. Okresy rozliczeniowe niebędące miesiącem rozdzielono proporcjonalnie do dni.</div>`);
+}
 function computeStats(bs) {
   if (!bs.length) return null;
   const sum = k => bs.reduce((t, b) => t + b[k], 0), n = bs.length;
@@ -630,7 +656,7 @@ function computeStats(bs) {
     fixed_share: gross ? Math.round(sum('fixed_net') * VATK / gross * 100) : 0, fixed_month: sum('fixed_net') * VATK / n,
     export_vs_buy: buyV ? Math.round(expV / buyV * 100) : 0, buy_value: buyV, last: s[n - 1]};
 }
-let allBills = [];
+let allBills = [], histCsv = [];
 function periodOptions() {
   const years = [...new Set(allBills.map(b => b.month.slice(0, 4)))].sort().reverse();
   return [['all', 'Wszystkie faktury'], ['12', 'Ostatnie 12 miesięcy'], ['6', 'Ostatnie 6 miesięcy'], ...years.map(y => ['y' + y, 'Rok ' + y])];
@@ -655,10 +681,11 @@ async function deviceStats(fromTs) {
 }
 async function renderStats() {
   const r = await api('api/bills');
-  allBills = r.bills;
+  allBills = r.bills; histCsv = r.history || [];
   const sel = $('#st_period'), cur = state.statsPeriod || 'all';
   sel.innerHTML = periodOptions().map(([v, l]) => `<option value="${v}" ${v === cur ? 'selected' : ''}>${l}</option>`).join('');
-  if (!allBills.length) { $('#st_body').innerHTML = '<div class="banner">Nie ma jeszcze żadnej faktury. Wgraj PDF-y faktur rozliczeniowych z Energi (nie korekty), a pojawią się tu statystyki i wykresy.</div>'; return; }
+  if (!allBills.length && !histCsv.length) { $('#st_body').innerHTML = '<div class="banner">Nie ma jeszcze żadnych danych. Wgraj PDF-y faktur rozliczeniowych z Energi (nie korekty) albo zestawienie rozliczeń w CSV (Energa 24), a pojawią się tu statystyki i wykresy.</div>'; return; }
+  if (!allBills.length) { $('#st_body').innerHTML = historyCard(); return; }
   const bs = filterBills(), st = computeStats(bs);
   const pl = v => Math.round(v).toLocaleString('pl-PL');
   const box = (c, ico, html) => `<div style="display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border:1px solid var(--line);border-left:4px solid var(--${c});border-radius:10px;background:var(--bg);margin-bottom:8px"><span style="font-size:18px">${ico}</span><div>${html}</div></div>`;
@@ -673,7 +700,7 @@ async function renderStats() {
     [...bs].reverse().map(b => `<div class="crow" style="${rowG}"><span>${monthName(b.month)}</span><span>${Math.round(b.import_kwh)} kWh</span><span>${Math.round(b.export_kwh)} kWh</span><span>${zl(b.deposit_used)}</span><b>${zl(b.to_pay)}</b><button class="x" data-bd="${esc(b.month)}" title="Usuń fakturę" aria-label="Usuń fakturę">✕</button></div>`).join('') + '</div>';
   const years = new Set(allBills.map(b => b.month.slice(0, 4)));
   $('#st_body').innerHTML = statCard(`W skrócie (${st.months} mies.: ${monthName(st.from)} – ${monthName(st.to)})`, sum)
-    + chartsHtml(bs, allBills) + `<div id="st_dev"></div>`
+    + chartsHtml(bs, allBills) + `<div id="st_dev"></div>` + historyCard()
     + statCard('Faktury w wybranym okresie', table) + (years.size > 1 ? statCard('Podsumowanie roczne', yearTable(allBills)) : '');
   document.querySelectorAll('[data-bd]').forEach(b => b.onclick = async () => {
     if (!confirm('Usunąć fakturę z ' + monthName(b.dataset.bd) + '?')) return;
@@ -703,6 +730,13 @@ $('#b_file').onchange = async () => {
   const out = [];
   for (const f of $('#b_file').files) {
     try {
+      if (/\.csv$/i.test(f.name)) {
+        const rc = await fetch('api/bills/csv', {method: 'POST', headers: {'Content-Type': 'text/csv'}, body: await f.arrayBuffer()});
+        if (!rc.ok) throw new Error(await rc.text());
+        const jc = await rc.json();
+        out.push(`✔ ${f.name}: wczytano ${jc.months} miesięcy (${monthName(jc.from)} – ${monthName(jc.to)})`);
+        continue;
+      }
       const r = await fetch('api/bills', {method: 'POST', headers: {'Content-Type': 'application/pdf'}, body: await f.arrayBuffer()});
       if (!r.ok) throw new Error(await r.text());
       const j = await r.json();

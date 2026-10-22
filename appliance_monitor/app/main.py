@@ -162,6 +162,7 @@ class Monitor:
         self.programs = load_json(DATA / "programs.json", {})
         self.pending = load_json(DATA / "pending.json", [])
         self.bills = load_json(DATA / "bills.json", {})
+        self.bills_csv = load_json(DATA / "bills_csv.json", {})
         for c in cfgs:
             for k, v in CFG_DEFAULTS.items():  # urządzenia zapisane w starszych wersjach
                 c.setdefault(k, v)
@@ -757,7 +758,23 @@ async def api_replay(request):
 async def api_bills_get(request):
     mon = request.app["mon"]
     items = sorted(mon.bills.values(), key=lambda b: b["month"], reverse=True)
-    return web.json_response({"bills": items, "stats": billslib.stats(items)})
+    hist = sorted(mon.bills_csv.values(), key=lambda b: b["month"])
+    return web.json_response({"bills": items, "stats": billslib.stats(items), "history": hist})
+
+
+async def api_bills_csv(request):
+    """Zestawienie rozliczeń z Energa 24 (CSV): wieloletnia historia kwot i zużycia."""
+    mon = request.app["mon"]
+    raw = await request.read()
+    try:
+        months = billslib.parse_csv(raw.decode("utf-8-sig", "replace"))
+    except ValueError as e:
+        raise web.HTTPBadRequest(text=str(e))
+    if not months:
+        raise web.HTTPBadRequest(text="W pliku nie ma żadnych faktur rozliczeniowych.")
+    mon.bills_csv = months
+    save_json(DATA / "bills_csv.json", months)
+    return web.json_response({"months": len(months), "from": min(months), "to": max(months)})
 
 
 async def api_bills_post(request):
@@ -975,6 +992,7 @@ async def make_app():
     app.router.add_post("/api/replay", api_replay)
     app.router.add_get("/api/bills", api_bills_get)
     app.router.add_post("/api/bills", api_bills_post)
+    app.router.add_post("/api/bills/csv", api_bills_csv)
     app.router.add_delete("/api/bills/{month}", api_bills_delete)
     app.router.add_get("/api/settings", api_settings_get)
     app.router.add_put("/api/settings", api_settings_put)
