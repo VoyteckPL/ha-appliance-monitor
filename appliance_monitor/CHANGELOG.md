@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.7.0
+- Osobny ekran „📊 Statystyki” (zamiast okna): filtr okresu (wszystkie, 12 / 6 miesięcy, wybrany rok), wgrywanie faktur, podsumowanie prostym językiem, wykresy (płatności, pobór i oddawanie, ceny, rok do roku), koszt urządzeń w okresie, tabela faktur i podsumowanie roczne.
+
 ## 0.6.2
 - Rachunki: podsumowanie prostym językiem (co na plus, co na minus) zamiast kafelków ze skrótami.
 
