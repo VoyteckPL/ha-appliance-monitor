@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.6.2
+- Rachunki: podsumowanie prostym językiem (co na plus, co na minus) zamiast kafelków ze skrótami.
+
 ## 0.6.1
 - Rachunki: wykresy (ile płacisz miesięcznie z podziałem na depozyt, pobór i oddawanie, ceny za kWh) oraz podsumowanie roczne.
 

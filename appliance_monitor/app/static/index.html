@@ -544,7 +544,7 @@ $('#s_wday').innerHTML = ['Poniedziałek','Wtorek','Środa','Czwartek','Piątek'
 const showMode = () => { const pv = $('#s_mode').value === 'pv'; $('#s_pv').hidden = !pv; $('#s_pricewrap').hidden = pv; };
 $('#s_mode').onchange = showMode;
 
-const zl = v => (+v).toFixed(2).replace('.', ',') + ' ' + state.settings.currency;
+const zl = v => (+v).toLocaleString('pl-PL', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + ' ' + state.settings.currency;
 const MON = ['sty','lut','mar','kwi','maj','cze','lip','sie','wrz','paź','lis','gru'];
 const monthName = m => MON[+m.slice(5) - 1] + ' ' + m.slice(0, 4);
 const CW = 640, CH = 170, PL = 38, PB = 22, PT = 14;
@@ -606,13 +606,15 @@ async function loadBills() {
   const r = await api('api/bills'), st = r.stats;
   if (!st) { $('#b_body').innerHTML = '<div class="banner">Nie ma jeszcze żadnej faktury.</div>'; return; }
   const tile = (l, v, h) => `<div class="tile" title="${esc(h)}"><span class="muted small">${l}</span><b>${v}</b></div>`;
-  $('#b_body').innerHTML = `<div class="tiles">
-      ${tile('Średni rachunek / mies.', zl(st.avg_paid), 'Kwota do zapłaty po odliczeniu depozytu, średnio z ' + st.months + ' mies.')}
-      ${tile('Zyskałeś z depozytu', zl(st.total_deposit), 'Wartość energii oddanej do sieci, zaliczona na poczet rachunków')}
-      ${tile('Oddajesz za', st.export_vs_buy + '% ceny', 'Tyle procent ceny zakupu dostajesz za oddaną kWh (wg miesięcznych cen)')}
-      ${tile('Opłaty stałe', st.fixed_share + '% rachunku', 'Abonament, opłata handlowa, sieciowa stała i mocowa: płacisz je niezależnie od zużycia')}
-      ${tile('Skompensowane godzinowo', Math.round(st.netted_kwh) + ' kWh', 'Tyle z pobranych ' + Math.round(st.import_kwh) + ' kWh zbilansowano w tej samej godzinie energią z paneli')}
-    </div>
+  const pl = v => Math.round(v).toLocaleString('pl-PL');
+  const box = (c, ico, html) => `<div style="display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border:1px solid var(--line);border-left:4px solid var(--${c});border-radius:10px;background:var(--bg);margin-bottom:8px"><span style="font-size:18px">${ico}</span><div>${html}</div></div>`;
+  $('#b_body').innerHTML = `
+    <div class="sec">W skrócie (${st.months} mies.: ${monthName(st.from)} – ${monthName(st.to)})</div>
+    ${box('accent', '💳', `Za prąd płacisz średnio <b>${zl(st.avg_paid)} miesięcznie</b> (razem ${zl(st.total_paid)}). Tyle realnie wychodzi z Twojego konta.`)}
+    ${box('run', '✅', `<b>Na plus:</b> oddałeś do sieci <b>${pl(st.export_kwh)} kWh</b> i dostałeś za to <b>${zl(st.total_deposit)}</b>, które zmniejszyły rachunki (ok. ${zl(st.total_deposit / st.months)} miesięcznie).`)}
+    ${box('run', '✅', `<b>Na plus:</b> <b>${pl(st.netted_kwh)} kWh</b> pobranych z sieci nic Cię nie kosztowało, bo w tej samej godzinie oddałeś tyle samo (rozlicza się 1 do 1).`)}
+    ${box('done', '⚠️', `<b>Na minus:</b> za oddaną energię dostajesz tylko <b>${st.export_vs_buy}%</b> tego, co płacisz za prąd z sieci. Taka sama ilość kosztowałaby Cię przy zakupie ${zl(st.buy_value)}, a dostałeś ${zl(st.total_deposit)}. Dlatego opłaca się zużywać prąd od razu, gdy świeci słońce (pralka, zmywarka w dzień).`)}
+    ${box('done', '⚠️', `<b>Na minus:</b> opłaty stałe to ok. <b>${zl(st.fixed_month)} miesięcznie</b> (${st.fixed_share}% rachunku). Płacisz je zawsze, nawet gdy prawie nic nie pobierasz.`)}
     <div class="hint" style="margin-top:10px">Okres ${monthName(st.from)} – ${monthName(st.to)}. Aktualne ceny: zakup ${st.last.import_price.toFixed(3)} · oddana kWh ${st.last.export_price.toFixed(3)} ${esc(state.settings.currency)}.</div>
     ${chartsHtml(r.bills)}
     <div class="sec">Wszystkie faktury</div>

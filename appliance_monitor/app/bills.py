@@ -111,6 +111,8 @@ def stats(bills):
         "fixed_share": round(sum(b["fixed_net"] for b in bs) * VAT / gross * 100, 1) if gross else 0,
         "export_vs_buy": round(exp_value / buy_value * 100, 0) if buy_value else 0,   # ile % ceny zakupu dostajesz za oddaną kWh
         "real_kwh_cost": round(paid / billed, 2) if billed else 0,   # wydane z kieszeni na rozliczoną kWh
+        "buy_value": round(buy_value, 2),                           # tyle kosztowałaby oddana energia po cenie zakupu
+        "fixed_month": round(sum(x["fixed_net"] for x in bs) * VAT / n, 2),
         "last": {"month": last["month"], "to_pay": last["to_pay"], "gross": last["gross"],
                  "import_price": last["import_price"], "export_price": last["export_price"]},
     }
