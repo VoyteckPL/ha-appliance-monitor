@@ -43,7 +43,7 @@ DEFAULT_SETTINGS = {
     "price_per_kwh": 1.0, "currency": "zł",
     "price_mode": "flat", "import_price": 1.24, "export_price": 0.30,
     "grid_import_entity": "", "grid_export_entity": "",
-    "pv_entity": "", "pv_cost": 30000,
+    "pv_entity": "", "pv_cost": 30000, "pv_start": "",
     "quiet_enabled": True, "quiet_from": "22:00", "quiet_to": "07:00",
     "weekly_enabled": False, "weekly_day": 6, "weekly_time": "18:00", "weekly_targets": [],
 }
@@ -812,17 +812,19 @@ async def api_bills_get(request):
 async def api_pv(request):
     mon = request.app["mon"]
     ent = mon.settings.get("pv_entity")
-    if not ent:
-        return web.json_response({"configured": False})
-    try:
-        prod = await mon.pv_production(ent)
-    except Exception as e:
-        raise web.HTTPBadGateway(text=f"Nie mogę pobrać statystyk produkcji z HA: {e}")
-    if not prod:
-        raise web.HTTPBadGateway(text="HA nie ma długoterminowych statystyk dla tej encji (musi być licznik energii w kWh z klasą stanu total_increasing).")
-    res = pvgain.compute(prod, billslib.by_month(mon.bills.values()), float(mon.settings.get("pv_cost") or 0))
-    res.update(configured=True, entity=ent, first_data=min(prod))
-    return web.json_response(res)
+    cost = float(mon.settings.get("pv_cost") or 0)
+    months = billslib.by_month(mon.bills.values())
+    out = {"configured": bool(ent), "estimate": pvgain.estimate(mon.bills_csv, months, mon.settings.get("pv_start") or None, cost)}
+    if ent:
+        try:
+            prod = await mon.pv_production(ent)
+            if not prod:
+                raise RuntimeError("HA nie ma długoterminowych statystyk dla tej encji (musi być licznik energii w kWh)")
+            out["exact"] = pvgain.compute(prod, months, cost)
+            out["first_data"] = min(prod)
+        except Exception as e:
+            out["exact_error"] = f"Nie mogę pobrać statystyk produkcji z HA: {e}"
+    return web.json_response(out)
 
 
 async def api_bills_csv(request):
@@ -931,6 +933,7 @@ async def api_settings_put(request):
         "price_mode": mode, "import_price": num("import_price", 1.24), "export_price": num("export_price", 0.3),
         "grid_import_entity": ent("grid_import_entity"), "grid_export_entity": ent("grid_export_entity"),
         "pv_entity": pv_ent, "pv_cost": round(pv_cost, 2),
+        "pv_start": (lambda v: v if re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", v) else "")(str(body.get("pv_start", mon.settings.get("pv_start", "")) or "")),
         "quiet_enabled": bool(body.get("quiet_enabled", True)),
         "quiet_from": hhmm("quiet_from", "22:00"), "quiet_to": hhmm("quiet_to", "07:00"),
         "weekly_enabled": bool(body.get("weekly_enabled", False)), "weekly_day": wday,

@@ -634,6 +634,19 @@ function monthInfo(m) {
   const b = allBills.find(x => x.month === m), h = histCsv.find(x => x.month === m);
   return {m, b, h, gross: h ? h.gross : (b ? b.gross : null), kwh: h ? h.billed_kwh : (b ? b.billed_kwh : null)};
 }
+function estTip(m) {
+  const x = pvEst && pvEst.months.find(r => r.month === m);
+  if (!x) return `<b>${monthName(m)}</b><br>Brak faktury z tego miesiąca`;
+  return `<b>${monthName(m)}</b><br>Zysk <b>${zl(x.saving)}</b> (łącznie od początku ${zl(x.cumulative)})`;
+}
+function estPick(m) {
+  const x = pvEst && pvEst.months.find(r => r.month === m);
+  const body = !x ? '<div class="small">Brak faktury z tego miesiąca.</div>' : [
+    `Bez paneli zużyłbyś ok. <b>${Math.round(x.baseline_kwh)} kWh</b> (średnia z tego miesiąca w latach przed instalacją) po cenie ${x.price.toFixed(3).replace('.', ',')} zł/kWh${x.estimated ? ' (cena szacowana)' : ''} i z opłatami stałymi: <b>${zl(x.counterfactual)}</b>.`,
+    `Faktycznie zapłaciłeś (faktura minus depozyt): <b>${zl(x.actual)}</b>.`,
+    `Zysk w tym miesiącu: <b>${zl(x.saving)}</b>. Łącznie od początku: <b>${zl(x.cumulative)}</b>.`].map(t => `<div class="small" style="margin:3px 0">${t}</div>`).join('');
+  return `<div class="in"><div class="pk-h"><b>${monthName(m)} · zysk z fotowoltaiki (szacunek)</b><button id="pk_x" aria-label="Zamknij">✕</button></div>${body}</div>`;
+}
 function pvTip(m) {
   const x = pvData && pvData.months.find(r => r.month === m);
   if (!x) return `<b>${monthName(m)}</b><br>Brak danych o produkcji`;
@@ -678,7 +691,7 @@ function markSel(m) { document.querySelectorAll('#st_body .hit').forEach(r => r.
   body.addEventListener('mousemove', e => {
     const r = e.target.closest && e.target.closest('.hit');
     if (!r) { tip.hidden = true; return; }
-    tip.innerHTML = r.closest('#st_pv') ? pvTip(r.dataset.m) : tipHtml(r.dataset.m); tip.hidden = false;
+    tip.innerHTML = r.closest('#st_pvest') ? estTip(r.dataset.m) : r.closest('#st_pvex') ? pvTip(r.dataset.m) : tipHtml(r.dataset.m); tip.hidden = false;
     const w = tip.offsetWidth, x = Math.min(e.clientX + 14, innerWidth - w - 8);
     tip.style.left = Math.max(8, x) + 'px'; tip.style.top = (e.clientY + 16) + 'px';
   });
@@ -687,38 +700,61 @@ function markSel(m) { document.querySelectorAll('#st_body .hit').forEach(r => r.
     const r = e.target.closest && e.target.closest('.hit');
     if (!r) return;
     tip.hidden = true; state.selMonth = r.dataset.m; markSel(state.selMonth);
-    const pick = $('#st_pick'); pick.innerHTML = r.closest('#st_pv') ? pvPick(state.selMonth) : pickHtml(state.selMonth); pick.hidden = false;
+    const pick = $('#st_pick'); pick.innerHTML = r.closest('#st_pvest') ? estPick(state.selMonth) : r.closest('#st_pvex') ? pvPick(state.selMonth) : pickHtml(state.selMonth); pick.hidden = false;
     $('#pk_x').onclick = () => { pick.hidden = true; state.selMonth = null; markSel(null); };
   });
 })();
-let pvData = null;
-async function pvCard() {
-  let r;
-  try { r = await api('api/pv'); } catch (e) { return statCard('Fotowoltaika: ile zarobiłeś', `<div class="banner">${esc(e.message)}</div>` + pvSetup(null)); }
-  if (!r.configured) return statCard('Fotowoltaika: ile zarobiłeś', `<div class="small muted" style="margin-bottom:8px">Żeby policzyć, ile daje instalacja, potrzebuję licznika produkcji z falownika (kWh). Resztę biorę z faktur.</div>` + pvSetup(null));
-  pvData = r;
-  const t = r.total, ms = r.months, f = ms[0], l = ms[ms.length - 1], C = state.settings.currency;
-  if (!ms.length) return statCard('Fotowoltaika: ile zarobiłeś', `<div class="banner">Brak miesięcy z jednoczesnymi danymi: produkcja z HA i faktura PDF. Wgraj faktury z okresu pracy instalacji.</div>` + pvSetup(r));
-  const pl = v => Math.round(v).toLocaleString('pl-PL');
-  const mk = (c, ico, h) => `<div style="display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border:1px solid var(--line);border-left:4px solid var(--${c});border-radius:10px;background:var(--bg);margin-bottom:8px"><span style="font-size:18px">${ico}</span><div>${h}</div></div>`;
-  let roi = '';
-  if (t.cost > 0) {
-    const left = t.cost - t.benefit;
-    roi = left > 0
-      ? mk('accent', '🎯', `Zwrot z inwestycji (${zl(t.cost)}): <b>${Math.round(t.benefit / t.cost * 100)}%</b>. Przy średnim zysku ${zl(t.avg_month)} miesięcznie (ostatnie 12 mies.) zostało ok. <b>${(left / Math.max(t.avg_month, 1) / 12).toFixed(1).replace('.', ',')} roku</b>.`)
-      : mk('run', '🎉', `Instalacja <b>już się zwróciła</b> i zarobiła ponad koszt (${zl(t.cost)}): <b>+${zl(-left)}</b>.`);
-  }
-  const html = `${mk('run', '☀️', `Od ${monthName(f.month)} do ${monthName(l.month)} (${t.months} mies.) fotowoltaika dała Ci łącznie <b>${zl(t.benefit)}</b>, średnio ${zl(t.benefit / t.months)} miesięcznie.`)}
-    ${mk('run', '🏠', `Wyprodukowałeś <b>${pl(t.production)} kWh</b>, z tego sam zużyłeś <b>${pl(t.self)} kWh</b>. Dzięki temu nie kupiłeś ich z sieci: <b>${zl(t.avoided)}</b> oszczędności.`)}
-    ${mk('run', '🔌', `Oddałeś do sieci <b>${pl(t.export)} kWh</b> i dostałeś za to <b>${zl(t.deposit)}</b> w depozycie.`)}
-    ${roi}
+let pvData = null, pvEst = null;
+const pvBox = (c, ico, h) => `<div style="display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border:1px solid var(--line);border-left:4px solid var(--${c});border-radius:10px;background:var(--bg);margin-bottom:8px"><span style="font-size:18px">${ico}</span><div>${h}</div></div>`;
+function roiBox(total, cost, avg) {
+  if (!(cost > 0)) return '';
+  const left = cost - total;
+  return left > 0
+    ? pvBox('accent', '🎯', `Zwrot z inwestycji (${zl(cost)}): <b>${Math.round(total / cost * 100)}%</b>. Przy średnim zysku ${zl(avg)} miesięcznie (ostatnie 12 mies.) zostało ok. <b>${(left / Math.max(avg, 1) / 12).toFixed(1).replace('.', ',')} roku</b>.`)
+    : pvBox('run', '🎉', `Instalacja <b>już się zwróciła</b> i zarobiła ponad koszt (${zl(cost)}): <b>+${zl(-left)}</b>.`);
+}
+function estSection(e) {
+  if (!e) return `<div class="banner">Do oszacowania zysku potrzebuję faktur PDF z okresu, w którym instalacja już działała (z oddaną energią). Wgraj je wyżej.</div>`;
+  if (e.error) return `<div class="banner">${esc(e.error)}</div>`;
+  pvEst = e;
+  const t = e.total, ms = e.months, f = ms[0], l = ms[ms.length - 1];
+  const bars = ms.map(x => ({month: x.month, v: Math.max(x.saving, 0)}));
+  return `<div class="sec" style="margin-top:0">Od początku instalacji (szacunek z faktur)</div>
+    ${pvBox('run', '☀️', `Od ${monthName(f.month)} do ${monthName(l.month)} (${t.months} mies. z fakturami) fotowoltaika zaoszczędziła Ci szacunkowo <b>${zl(t.saving)}</b>, średnio ${zl(t.saving / t.months)} miesięcznie.`)}
+    ${roiBox(t.saving, t.cost, t.avg_month)}
+    <div class="small muted" style="margin:0 0 8px">Jak to liczę: porównuję to, co faktycznie zapłaciłeś (faktura minus depozyt), z tym, ile zapłaciłbyś bez paneli, czyli przy zużyciu takim jak w latach przed instalacją (średnia z tych samych miesięcy, ${t.baseline_months} mies. z CSV) po cenach z danego miesiąca i z tymi samymi opłatami stałymi. To szacunek: jeśli teraz zużywasz więcej prądu (np. pompa ciepła do basenu), prawdziwy zysk jest wyższy.</div>
+    <div id="st_pvest">
     <div class="sec">Zysk narastająco</div>${legend([['var(--run)', 'łącznie od początku'], ...(t.cost > 0 ? [['var(--danger)', 'koszt instalacji']] : [])])}
     ${pvLine(ms, t.cost)}
+    <div class="sec">Zysk w każdym miesiącu</div>
+    ${barChart(bars, [{n: 'zysk', c: 'var(--run)', f: b => b.v, t: v => zl(v)}], false)}</div>
+    <div class="grid2" style="align-items:end;margin-top:8px"><label>Początek instalacji (miesiąc)<input type="month" id="pv_start" value="${esc(t.start)}"></label>
+      <div><button id="pv_start_save">Zapisz</button></div></div>`;
+}
+function exactSection(r) {
+  const t = r.total, ms = r.months;
+  if (!ms.length) return `<div class="banner">Są statystyki produkcji z HA, ale nie pokrywają się z miesiącami z fakturami PDF.</div>`;
+  pvData = r;
+  const f = ms[0], l = ms[ms.length - 1], pl = v => Math.round(v).toLocaleString('pl-PL');
+  return `<div class="sec">Dokładnie, z licznika falownika (od ${monthName(f.month)})</div>
+    ${pvBox('run', '☀️', `Od ${monthName(f.month)} do ${monthName(l.month)} (${t.months} mies.) fotowoltaika dała Ci <b>${zl(t.benefit)}</b>, średnio ${zl(t.benefit / t.months)} miesięcznie.`)}
+    ${pvBox('run', '🏠', `Wyprodukowałeś <b>${pl(t.production)} kWh</b>, z tego sam zużyłeś <b>${pl(t.self)} kWh</b>. Dzięki temu nie kupiłeś ich z sieci: <b>${zl(t.avoided)}</b> oszczędności.`)}
+    ${pvBox('run', '🔌', `Oddałeś do sieci <b>${pl(t.export)} kWh</b> i dostałeś za to <b>${zl(t.deposit)}</b> w depozycie.`)}
+    <div id="st_pvex">
     <div class="sec">Zysk w każdym miesiącu</div>${legend([['var(--run)', 'oszczędność na własnym zużyciu'], ['var(--accent)', 'depozyt za oddaną energię']])}
-    ${barChart(ms.map(x => ({month: x.month, a: x.avoided, d: x.deposit})), [{n: 'oszczędność', c: 'var(--run)', f: b => b.a, t: v => zl(v)}, {n: 'depozyt', c: 'var(--accent)', f: b => b.d, t: v => zl(v)}], true)}
-    <div class="hint">Zysk = (produkcja − oddane do sieci) × cena zakupu z faktury + depozyt za oddaną energię. Produkcja pochodzi ze statystyk HA${r.first_data ? ' (od ' + monthName(r.first_data) + ')' : ''}. ${r.missing.length ? 'Pominięto ' + r.missing.length + ' mies. bez faktury PDF.' : ''} <a href="#" id="pv_edit">Zmień licznik produkcji</a></div>
-    <div class="grid2" style="align-items:end"><label>Koszt instalacji (zł)<input type="number" id="pv_cost2" min="0" step="100" value="${t.cost || ''}"></label>
+    ${barChart(ms.map(x => ({month: x.month, a: x.avoided, d: x.deposit})), [{n: 'oszczędność', c: 'var(--run)', f: b => b.a, t: v => zl(v)}, {n: 'depozyt', c: 'var(--accent)', f: b => b.d, t: v => zl(v)}], true)}</div>
+    <div class="hint">Zysk = (produkcja − oddane do sieci) × cena zakupu z faktury + depozyt. Produkcja ze statystyk HA${r.first_data ? ' od ' + monthName(r.first_data) : ''}; im dłużej HA zbiera dane z falownika, tym ta część jest dłuższa.</div>`;
+}
+async function pvCard() {
+  let r;
+  try { r = await api('api/pv'); } catch (e) { return statCard('Fotowoltaika: ile zarobiłeś', `<div class="banner">${esc(e.message)}</div>`); }
+  const t = (r.estimate && r.estimate.total) || {};
+  let html = estSection(r.estimate);
+  if (r.exact) html += exactSection(r.exact);
+  else if (r.exact_error) html += `<div class="banner">${esc(r.exact_error)}</div>`;
+  html += `<div class="grid2" style="align-items:end;margin-top:8px"><label>Koszt instalacji (zł)<input type="number" id="pv_cost2" min="0" step="100" value="${state.settings.pv_cost || ''}"></label>
       <div><button id="pv_cost_save">Zapisz koszt</button> <span id="pv_cost_err" class="small" style="color:var(--danger)"></span></div></div>`;
+  html += `<div class="sec">Dokładny zysk z falownika</div>` + (r.configured ? `<a href="#" id="pv_edit">Zmień licznik produkcji</a>` : `<div class="small muted" style="margin-bottom:8px">Wybierz licznik produkcji z falownika, a policzę też dokładny zysk od momentu, od którego HA go zapisuje.</div>`) + pvSetup(r.configured ? r : null);
   return statCard('Fotowoltaika: ile zarobiłeś', html);
 }
 function pvLine(ms, cost) {
@@ -731,13 +767,17 @@ function pvLine(ms, cost) {
 }
 function pvSetup(r) {
   return `<div id="pv_form" ${r ? 'hidden' : ''}><div class="grid2"><label>Licznik produkcji z falownika (kWh)<select id="pv_ent"><option value="">— wybierz —</option></select></label>
-    <label>Koszt instalacji, opcjonalnie (zł)<input type="number" id="pv_cost" min="0" step="100" value="${r ? r.total.cost : (state.settings.pv_cost || '')}"></label></div>
+    <label>Koszt instalacji, opcjonalnie (zł)<input type="number" id="pv_cost" min="0" step="100" value="${state.settings.pv_cost || ''}"></label></div>
     <div class="hint">Wybierz łączną (rosnącą) energię wyprodukowaną, nie moc chwilową. Koszt instalacji pozwala pokazać zwrot z inwestycji.</div>
     <button class="primary" id="pv_save">Zapisz i policz</button> <span id="pv_err" class="small" style="color:var(--danger)"></span></div>`;
 }
 async function pvWire() {
   const form = $('#pv_form');
   const ed = $('#pv_edit'); if (ed) ed.onclick = e => { e.preventDefault(); if (form) form.hidden = false; };
+  const ps = $('#pv_start_save'); if (ps) ps.onclick = async () => {
+    try { state.settings = await api('api/settings', 'PUT', {...(await api('api/settings')), pv_start: $('#pv_start').value || ''}); renderStats(); }
+    catch (e) { alert(e.message); }
+  };
   const cs = $('#pv_cost_save'); if (cs) cs.onclick = async () => {
     try { state.settings = await api('api/settings', 'PUT', {...(await api('api/settings')), pv_cost: +$('#pv_cost2').value || 0}); renderStats(); }
     catch (e) { $('#pv_cost_err').textContent = e.message; }

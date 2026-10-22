@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.12.0
+- Zysk z fotowoltaiki od początku instalacji, bez falownika: szacunek z samych faktur (porównanie z kosztem prądu przy zużyciu z lat przed panelami), wykres narastająco z linią kosztu instalacji i zwrotem z inwestycji, wykres miesięczny, klikalne miesiące. Początek instalacji wykrywany z faktur, do zmiany ręcznie.
+- Dokładny zysk z licznika falownika pokazywany osobno, od miesiąca, od którego HA zapisuje jego statystyki.
+
 ## 0.11.2
 - Naprawa: zapis kosztu instalacji i licznika produkcji używa świeżych ustawień, więc nie nadpisuje zmian zrobionych w drugiej karcie przeglądarki.
 
