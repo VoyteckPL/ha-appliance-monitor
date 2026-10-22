@@ -101,3 +101,32 @@ def state_messages(a, now, extra=None):
             msgs.append((_t(cid, key), str(extra[key])))
     msgs.append((_t(cid, "eta"), extra.get("eta") or "none"))
     return msgs
+
+
+BILL_SENSORS = [  # (klucz, nazwa, jednostka, ikona, device_class)
+    ("last_to_pay", "Ostatni rachunek do zapłaty", "cur", "mdi:receipt-text", None),
+    ("avg_paid", "Średni rachunek miesięcznie", "cur", "mdi:cash-multiple", None),
+    ("import_price", "Cena zakupu prądu", "cur/kWh", "mdi:transmission-tower-import", None),
+    ("export_price", "Wartość oddanej kWh", "cur/kWh", "mdi:transmission-tower-export", None),
+    ("deposit_total", "Depozyt zyskany z oddanej energii", "cur", "mdi:piggy-bank", None),
+]
+
+
+def bills_messages(st, currency):
+    """Encje HA z faktur: urządzenie „Rachunki za prąd”."""
+    dev = {"identifiers": ["appliance_monitor_bills"], "name": "Rachunki za prąd",
+           "manufacturer": "HA Appliance Monitor", "model": "Faktury Energa"}
+    vals = {"last_to_pay": st["last"]["to_pay"], "avg_paid": st["avg_paid"],
+            "import_price": st["last"]["import_price"], "export_price": st["last"]["export_price"],
+            "deposit_total": st["total_deposit"]}
+    out = []
+    for key, name, unit, icon, dc in BILL_SENSORS:
+        u = unit.replace("cur", currency)
+        cfg = {"name": name, "unique_id": f"am_bills_{key}", "object_id": f"rachunki_{key}",
+               "state_topic": f"appliance_monitor/bills/{key}", "unit_of_measurement": u, "icon": icon,
+               "availability_topic": STATUS_TOPIC, "device": dev}
+        if dc:
+            cfg["device_class"] = dc
+        out.append((f"homeassistant/sensor/am_bills/{key}/config", json.dumps(cfg, ensure_ascii=False)))
+        out.append((f"appliance_monitor/bills/{key}", str(vals[key])))
+    return out

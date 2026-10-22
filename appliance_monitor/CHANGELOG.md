@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.0
+- Zakładka „Rachunki” (🧾): wgrywasz PDF faktury Energa, a dodatek odczytuje pobraną i oddaną energię, ceny, depozyt i kwotę do zapłaty. Bez ręcznego wpisywania.
+- Przy trybie „Z fotowoltaiką” ceny zakupu i oddanej kWh aktualizują się same z najnowszej faktury.
+- Statystyki: średni rachunek miesięcznie, zysk z depozytu, za ile procent ceny zakupu oddajesz energię, udział opłat stałych, energia skompensowana godzinowo.
+- Nowe encje w HA (urządzenie „Rachunki za prąd”): ostatni rachunek, średni rachunek, cena zakupu, wartość oddanej kWh, depozyt.
+- Obraz dodatku zawiera teraz poppler-utils (czytanie PDF), więc aktualizacja przebuduje dodatek.
+
 ## 0.5.0
 - Koszt cyklu z fotowoltaiką (net-billing): w ⚙ → „Cena prądu” → „Z fotowoltaiką” wybierasz liczniki pobranej i oddanej energii oraz wpisujesz cenę zakupu i wartość oddanej kWh z faktury. Koszt liczony godzina po godzinie z salda licznika: energia pokryta nadwyżką z paneli kosztuje tyle, ile utracona wartość oddanej energii, reszta pełną cenę z sieci. Dotyczy panelu, encji kosztu, powiadomień i podsumowania tygodnia.
 

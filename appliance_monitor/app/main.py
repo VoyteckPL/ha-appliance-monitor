@@ -15,6 +15,7 @@ import paho.mqtt.client as mqtt
 from aiohttp import ClientSession, ClientTimeout, WSMsgType, web
 
 import discovery
+import bills as billslib
 import pricing
 import programs
 from engine import (CFG_DEFAULTS, DEFAULT_MSG_FINISH, DEFAULT_MSG_REMIND, DEFAULT_MSG_START,
@@ -160,6 +161,7 @@ class Monitor:
         self.settings.update(load_json(DATA / "settings.json", {}))
         self.programs = load_json(DATA / "programs.json", {})
         self.pending = load_json(DATA / "pending.json", [])
+        self.bills = load_json(DATA / "bills.json", {})
         for c in cfgs:
             for k, v in CFG_DEFAULTS.items():  # urządzenia zapisane w starszych wersjach
                 c.setdefault(k, v)
@@ -477,8 +479,17 @@ class Monitor:
         for topic, payload in discovery.state_messages(a, now, self.extra(a, now)):
             self._pub(topic, payload)
 
+    def publish_bills(self):
+        st = billslib.stats(list(self.bills.values()))
+        if not st:
+            return
+        for topic, payload in discovery.bills_messages(st, self.settings["currency"]):
+            if self.published.get(topic) != payload and self.mqtt.publish(topic, payload):
+                self.published[topic] = payload
+
     def republish_all(self):
         self.published.clear()
+        self.publish_bills()
         now = time.time()
         for a in self.appliances.values():
             self.publish_discovery(a)
@@ -743,6 +754,47 @@ async def api_replay(request):
     })
 
 
+async def api_bills_get(request):
+    mon = request.app["mon"]
+    items = sorted(mon.bills.values(), key=lambda b: b["month"], reverse=True)
+    return web.json_response({"bills": items, "stats": billslib.stats(items)})
+
+
+async def api_bills_post(request):
+    """Przyjmuje plik PDF faktury Energa (surowe ciało żądania), odczytuje ją i zapisuje."""
+    mon = request.app["mon"]
+    data = await request.read()
+    if not data.startswith(b"%PDF"):
+        raise web.HTTPBadRequest(text="To nie jest plik PDF.")
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "pdftotext", "-layout", "-", "-", stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+        out, _ = await asyncio.wait_for(proc.communicate(data), 30)
+        bill = billslib.parse_invoice(out.decode("utf-8", "replace"))
+    except ValueError as e:
+        raise web.HTTPBadRequest(text=str(e))
+    except (OSError, asyncio.TimeoutError):
+        raise web.HTTPBadGateway(text="Nie udało się odczytać PDF-a (brak pdftotext?).")
+    mon.bills[bill["month"]] = bill
+    save_json(DATA / "bills.json", mon.bills)
+    prices = False
+    if bill["month"] == max(mon.bills) and mon.settings.get("price_mode") == "pv":
+        mon.settings["import_price"], mon.settings["export_price"] = bill["import_price"], bill["export_price"]
+        save_json(DATA / "settings.json", mon.settings)
+        prices = True
+    mon.publish_bills()
+    return web.json_response({"bill": bill, "prices_updated": prices})
+
+
+async def api_bills_delete(request):
+    mon = request.app["mon"]
+    if mon.bills.pop(request.match_info["month"], None) is None:
+        raise web.HTTPNotFound()
+    save_json(DATA / "bills.json", mon.bills)
+    return web.Response(status=204)
+
+
 async def api_settings_get(request):
     return web.json_response(request.app["mon"].settings)
 
@@ -908,7 +960,7 @@ async def make_app():
     mon = Monitor()
     mon.load()
     mon.session = ClientSession(timeout=ClientTimeout(total=10))
-    app = web.Application(middlewares=[guard])
+    app = web.Application(middlewares=[guard], client_max_size=10 * 1024 * 1024)
     app["mon"] = mon
     app.router.add_get("/", index)
     app.router.add_get("/api/appliances", api_list)
@@ -921,6 +973,9 @@ async def make_app():
     app.router.add_put("/api/appliances/{id}/programs", api_programs_put)
     app.router.add_post("/api/appliances/{id}/unload", api_unload)
     app.router.add_post("/api/replay", api_replay)
+    app.router.add_get("/api/bills", api_bills_get)
+    app.router.add_post("/api/bills", api_bills_post)
+    app.router.add_delete("/api/bills/{month}", api_bills_delete)
     app.router.add_get("/api/settings", api_settings_get)
     app.router.add_put("/api/settings", api_settings_put)
     app.router.add_get("/api/options", api_options)

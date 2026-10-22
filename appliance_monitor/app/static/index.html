@@ -134,6 +134,7 @@
 <header>
   <h1><svg class="logo" viewBox="0 0 64 64" aria-hidden="true"><defs><linearGradient id="lg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#182669"/><stop offset="1" stop-color="#08aabe"/></linearGradient></defs><rect width="64" height="64" rx="15" fill="url(#lg)"/><rect x="13" y="8" width="38" height="46" rx="6" fill="#eef3fa"/><line x1="13" y1="20" x2="51" y2="20" stroke="#b0c0d6" stroke-width="1"/><circle cx="32" cy="38" r="13.5" fill="#8a9bb8"/><circle cx="32" cy="38" r="11.5" fill="#1e90e8"/><polyline points="21,39 27,39 29,34 32,43 35,30 38,40 40,39 43,39" fill="none" stroke="#fff" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/></svg>Urządzenia</h1>
   <div class="hbtns">
+    <button id="billsbtn" title="Rachunki za prąd" aria-label="Rachunki za prąd">🧾</button>
     <button id="gear" title="Ustawienia ogólne (cena prądu)" aria-label="Ustawienia ogólne">⚙</button>
     <button class="primary" id="add">+ Dodaj</button>
   </div>
@@ -220,6 +221,18 @@
     </div>
     <div id="d_body"></div>
   </div>
+</dialog>
+
+<!-- rachunki -->
+<dialog id="bdlg">
+  <form method="dialog">
+    <b>Rachunki za prąd (Energa)</b>
+    <div class="hint" style="margin-top:0">Wgraj PDF zwykłej faktury rozliczeniowej (nie korekty). Dodatek odczyta zużycie, oddaną energię i ceny, a przy trybie „Z fotowoltaiką” sam zaktualizuje ceny do liczenia kosztów.</div>
+    <input type="file" id="b_file" accept="application/pdf" multiple>
+    <div id="b_msg" class="small"></div>
+    <div id="b_body"></div>
+    <menu><button id="b_close" value="x">Zamknij</button></menu>
+  </form>
 </dialog>
 
 <!-- ustawienia ogólne -->
@@ -530,6 +543,45 @@ window.addEventListener('resize', () => { if ($('#det').open && det.entries.leng
 $('#s_wday').innerHTML = ['Poniedziałek','Wtorek','Środa','Czwartek','Piątek','Sobota','Niedziela'].map((d, i) => `<option value="${i}">${d}</option>`).join('');
 const showMode = () => { const pv = $('#s_mode').value === 'pv'; $('#s_pv').hidden = !pv; $('#s_pricewrap').hidden = pv; };
 $('#s_mode').onchange = showMode;
+
+const zl = v => (+v).toFixed(2).replace('.', ',') + ' ' + state.settings.currency;
+const MON = ['sty','lut','mar','kwi','maj','cze','lip','sie','wrz','paź','lis','gru'];
+const monthName = m => MON[+m.slice(5) - 1] + ' ' + m.slice(0, 4);
+async function loadBills() {
+  const r = await api('api/bills'), st = r.stats;
+  if (!st) { $('#b_body').innerHTML = '<div class="banner">Nie ma jeszcze żadnej faktury.</div>'; return; }
+  const tile = (l, v, h) => `<div class="tile" title="${esc(h)}"><span class="muted small">${l}</span><b>${v}</b></div>`;
+  $('#b_body').innerHTML = `<div class="tiles">
+      ${tile('Średni rachunek / mies.', zl(st.avg_paid), 'Kwota do zapłaty po odliczeniu depozytu, średnio z ' + st.months + ' mies.')}
+      ${tile('Zyskałeś z depozytu', zl(st.total_deposit), 'Wartość energii oddanej do sieci, zaliczona na poczet rachunków')}
+      ${tile('Oddajesz za', st.export_vs_buy + '% ceny', 'Tyle procent ceny zakupu dostajesz za oddaną kWh (wg miesięcznych cen)')}
+      ${tile('Opłaty stałe', st.fixed_share + '% rachunku', 'Abonament, opłata handlowa, sieciowa stała i mocowa: płacisz je niezależnie od zużycia')}
+      ${tile('Skompensowane godzinowo', Math.round(st.netted_kwh) + ' kWh', 'Tyle z pobranych ' + Math.round(st.import_kwh) + ' kWh zbilansowano w tej samej godzinie energią z paneli')}
+    </div>
+    <div class="hint" style="margin-top:10px">Okres ${monthName(st.from)} – ${monthName(st.to)}. Aktualne ceny: zakup ${st.last.import_price.toFixed(3)} · oddana kWh ${st.last.export_price.toFixed(3)} ${esc(state.settings.currency)}.</div>
+    <div class="cycles" style="max-height:none"><div class="crow h muted small" style="grid-template-columns:1.1fr 1fr 1fr 1fr 1.1fr 28px"><span>Miesiąc</span><span>Pobrano</span><span>Oddano</span><span>Depozyt</span><span>Do zapłaty</span><span></span></div>` +
+    r.bills.map(b => `<div class="crow" style="grid-template-columns:1.1fr 1fr 1fr 1fr 1.1fr 28px"><span>${monthName(b.month)}</span><span>${Math.round(b.import_kwh)} kWh</span><span>${Math.round(b.export_kwh)} kWh</span><span>${zl(b.deposit_used)}</span><b>${zl(b.to_pay)}</b><button class="x" data-bd="${esc(b.month)}" title="Usuń fakturę" aria-label="Usuń fakturę">✕</button></div>`).join('') + '</div>';
+  document.querySelectorAll('[data-bd]').forEach(b => b.onclick = async () => {
+    if (!confirm('Usunąć fakturę z ' + monthName(b.dataset.bd) + '?')) return;
+    await api('api/bills/' + b.dataset.bd, 'DELETE'); loadBills();
+  });
+}
+$('#billsbtn').onclick = () => { $('#b_msg').textContent = ''; $('#b_file').value = ''; $('#bdlg').showModal(); loadBills().catch(e => $('#b_msg').textContent = e.message); };
+$('#b_close').onclick = () => $('#bdlg').close();
+$('#b_file').onchange = async () => {
+  const out = [];
+  for (const f of $('#b_file').files) {
+    try {
+      const r = await fetch('api/bills', {method: 'POST', headers: {'Content-Type': 'application/pdf'}, body: await f.arrayBuffer()});
+      if (!r.ok) throw new Error(await r.text());
+      const j = await r.json();
+      out.push(`✔ ${monthName(j.bill.month)}: do zapłaty ${zl(j.bill.to_pay)}${j.prices_updated ? ' · ceny zaktualizowane' : ''}`);
+      if (j.prices_updated) state.settings.import_price = j.bill.import_price, state.settings.export_price = j.bill.export_price;
+    } catch (e) { out.push(`✖ ${f.name}: ${e.message}`); }
+  }
+  $('#b_msg').innerHTML = out.map(esc).join('<br>');
+  $('#b_file').value = ''; loadBills();
+};
 $('#gear').onclick = async () => {
   const S = state.settings;
   $('#s_price').value = S.price_per_kwh; $('#s_cur').value = S.currency;
