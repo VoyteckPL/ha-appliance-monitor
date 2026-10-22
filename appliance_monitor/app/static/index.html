@@ -727,24 +727,33 @@ function showView(v) {
 }
 $('#statsbtn').onclick = () => showView($('#stats').hidden ? 'stats' : 'list');
 $('#b_file').onchange = async () => {
-  const out = [];
-  for (const f of $('#b_file').files) {
+  const files = [...$('#b_file').files], ok = [], corr = [], bad = [];
+  let csvMsg = '';
+  for (let i = 0; i < files.length; i++) {
+    const f = files[i];
+    $('#b_msg').textContent = `Wczytuję ${i + 1} z ${files.length}…`;
     try {
       if (/\.csv$/i.test(f.name)) {
         const rc = await fetch('api/bills/csv', {method: 'POST', headers: {'Content-Type': 'text/csv'}, body: await f.arrayBuffer()});
         if (!rc.ok) throw new Error(await rc.text());
         const jc = await rc.json();
-        out.push(`✔ ${f.name}: wczytano ${jc.months} miesięcy (${monthName(jc.from)} – ${monthName(jc.to)})`);
+        csvMsg = `✔ CSV: wczytano ${jc.months} miesięcy (${monthName(jc.from)} – ${monthName(jc.to)})`;
         continue;
       }
       const r = await fetch('api/bills', {method: 'POST', headers: {'Content-Type': 'application/pdf'}, body: await f.arrayBuffer()});
-      if (!r.ok) throw new Error(await r.text());
-      const j = await r.json();
-      out.push(`✔ ${monthName(j.bill.month)}: do zapłaty ${zl(j.bill.to_pay)}${j.prices_updated ? ' · ceny zaktualizowane' : ''}`);
+      const t = await r.text();
+      if (!r.ok) { (/korygując/.test(t) ? corr : bad).push(`${f.name}: ${t}`); continue; }
+      const j = JSON.parse(t);
+      ok.push(j.bill.month);
       if (j.prices_updated) { state.settings.import_price = j.bill.import_price; state.settings.export_price = j.bill.export_price; }
-    } catch (e) { out.push(`✖ ${f.name}: ${e.message}`); }
+    } catch (err) { bad.push(`${f.name}: ${err.message}`); }
   }
-  $('#b_msg').innerHTML = out.map(esc).join('<br>');
+  const lines = [];
+  if (csvMsg) lines.push(csvMsg);
+  if (ok.length) lines.push(`✔ Wczytano faktur: ${ok.length} (nowe lub nadpisane miesiące: ${new Set(ok).size})`);
+  if (corr.length) lines.push(`↷ Pominięto korekt: ${corr.length} (nie są potrzebne)`);
+  if (bad.length) lines.push(`✖ Nie udało się odczytać: ${bad.length}`, ...bad.slice(0, 30));
+  $('#b_msg').innerHTML = lines.map(esc).join('<br>');
   $('#b_file').value = ''; renderStats();
 };
 $('#gear').onclick = async () => {

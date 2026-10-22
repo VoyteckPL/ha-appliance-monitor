@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.8.1
+- Wgrywanie wielu faktur naraz: postęp („3 z 140”) i zwięzłe podsumowanie (ile wczytano, ile korekt pominięto, które pliki się nie odczytały).
+
 ## 0.8.0
 - Import zestawienia rozliczeń z Energa 24 (CSV): cała historia kwot faktur i rozliczonych kWh od początku umowy, wykresy miesięczne i tabela rok po roku. Faktury PDF z danymi szczegółowymi mają pierwszeństwo przed danymi z CSV.
 
