@@ -222,6 +222,16 @@
       </div>
       <label>Treść przypomnienia<input type="text" id="f_msg_remind"></label>
       <div class="hint">Przypomnienia przychodzą, dopóki nie klikniesz „Wyjęte” (w powiadomieniu, w panelu albo w HA).</div>
+      <label>Po zakończeniu przełóż do (przekładanie prania)<select id="f_handoff"></select></label>
+      <div id="f_handoff_box" hidden>
+        <div class="grid2">
+          <label>Przypomnij po (min)<input type="number" id="f_ho_wait" min="1" step="5"></label>
+          <label>Kolejne co (min)<input type="number" id="f_ho_repeat" min="1" step="5"></label>
+        </div>
+        <label>Maks. liczba przypomnień<input type="number" id="f_ho_max" min="1" step="1"></label>
+        <label>Treść przypomnienia<input type="text" id="f_msg_handoff"></label>
+        <div class="hint">Pralka milczy po zakończeniu. Jeśli wybrane urządzenie (np. suszarka) włączy się po zakończeniu prania, uznaję je za przełożone i nic nie wysyłam. Jeśli nie, przychodzi przypomnienie z przyciskiem „Przełożone”. Zwykłe przypomnienia i powiadomienie o zakończeniu są wtedy pomijane.</div>
+      </div>
       <label class="chk"><input type="checkbox" id="f_anom"> Ostrzegaj o nietypowym cyklu</label>
       <label class="chk"><input type="checkbox" id="f_quiet"> Cisza nocna (godziny ustawisz w ⚙)</label>
       <div class="hint">W treści możesz użyć: {name} {duration} {energy} {cost} {program} {ago}</div>
@@ -1202,17 +1212,28 @@ async function openForm(id) {
     $('#f_unload').checked = c.unload_button !== false; $('#f_remind').value = c.remind_every ?? 0;
     $('#f_remind_max').value = c.remind_max ?? 3; $('#f_msg_remind').value = c.msg_remind || options.default_msg_remind;
     $('#f_anom').checked = c.notify_anomaly !== false; $('#f_quiet').checked = c.quiet !== false;
+    fillHandoff(id, c);
   } else {
     $('#f_preset').value = 'washer'; $('#f_name').value = ''; fillPreset('washer');
     $('#f_n_start').checked = false; $('#f_n_finish').checked = true;
     $('#f_msg_start').value = options.default_msg_start; $('#f_msg_finish').value = options.default_msg_finish;
     $('#f_unload').checked = true; $('#f_remind_max').value = 3; $('#f_msg_remind').value = options.default_msg_remind;
     $('#f_anom').checked = true; $('#f_quiet').checked = true;
+    fillHandoff(null, {});
   }
   setFormIcon();
   $('#dlg').showModal();
 }
 
+function fillHandoff(selfId, c) {
+  const others = state.appliances.filter(a => a.id !== selfId);
+  $('#f_handoff').innerHTML = '<option value="">— nie dotyczy —</option>' + others.map(a => `<option value="${esc(a.id)}">${esc(a.name)}</option>`).join('');
+  $('#f_handoff').value = others.some(a => a.id === c.handoff_to) ? c.handoff_to : '';
+  $('#f_ho_wait').value = c.handoff_wait ?? 20; $('#f_ho_repeat').value = c.handoff_repeat ?? 40; $('#f_ho_max').value = c.handoff_max ?? 2;
+  $('#f_msg_handoff').value = c.msg_handoff || options.default_msg_handoff;
+  $('#f_handoff_box').hidden = !$('#f_handoff').value;
+}
+$('#f_handoff').onchange = () => { $('#f_handoff_box').hidden = !$('#f_handoff').value; };
 function readForm() {
   return {
     preset: $('#f_preset').value, name: $('#f_name').value.trim(), power_entity: $('#f_entity').value,
@@ -1223,7 +1244,8 @@ function readForm() {
     notify_start: $('#f_n_start').checked, notify_finish: $('#f_n_finish').checked,
     msg_start: $('#f_msg_start').value, msg_finish: $('#f_msg_finish').value,
     unload_button: $('#f_unload').checked, remind_every: +$('#f_remind').value, remind_max: +$('#f_remind_max').value,
-    msg_remind: $('#f_msg_remind').value, notify_anomaly: $('#f_anom').checked, quiet: $('#f_quiet').checked,
+    msg_remind: $('#f_msg_remind').value, handoff_to: $('#f_handoff').value, handoff_wait: +$('#f_ho_wait').value,
+    handoff_repeat: +$('#f_ho_repeat').value, handoff_max: +$('#f_ho_max').value, msg_handoff: $('#f_msg_handoff').value, notify_anomaly: $('#f_anom').checked, quiet: $('#f_quiet').checked,
   };
 }
 

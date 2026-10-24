@@ -7,6 +7,7 @@ IDLE, RUNNING, FINISHED = "idle", "running", "finished"
 DEFAULT_MSG_START = "{name}: cykl rozpoczęty"
 DEFAULT_MSG_FINISH = "{name}: cykl zakończony ({duration}, {energy})"
 DEFAULT_MSG_REMIND = "{name}: gotowe od {ago}, wyjmij zawartość"
+DEFAULT_MSG_HANDOFF = "{name}: gotowe od {ago}, przełóż pranie do: {target}"
 
 # start_delay, stop_delay, min_duration w sekundach; reset_after i remind_every w minutach
 PRESETS = {
@@ -40,6 +41,7 @@ PRESETS = {
 CFG_DEFAULTS = {
     "unload_button": True, "remind_every": 0, "remind_max": 3,
     "msg_remind": DEFAULT_MSG_REMIND, "quiet": True, "notify_anomaly": True,
+    "handoff_to": "", "handoff_wait": 20, "handoff_repeat": 40, "handoff_max": 2, "msg_handoff": DEFAULT_MSG_HANDOFF,
 }
 
 
@@ -107,6 +109,7 @@ def render(template, info):
     out = out.replace("{cost}", info.get("cost") or "")
     out = out.replace("{program}", info.get("program") or "")
     out = out.replace("{ago}", fmt_duration(info.get("ago_s", 0)))
+    out = out.replace("{target}", info.get("target") or "")
     return re.sub(r" {2,}", " ", out).strip()
 
 
@@ -168,7 +171,7 @@ class Appliance:
         # przypomnienia o wyjęciu zawartości, dopóki nikt nie potwierdzi („Wyjęte")
         if self.state == FINISHED:
             every = c.get("remind_every", 0)
-            if (every > 0 and self.reminders_sent < c.get("remind_max", 3)
+            if (every > 0 and not c.get("handoff_to") and self.reminders_sent < c.get("remind_max", 3)
                     and now >= self.finished_at + (self.reminders_sent + 1) * every * 60):
                 self.reminders_sent += 1
                 events.append(("remind", {"name": c["name"], "finished_at": self.finished_at,

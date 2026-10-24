@@ -230,6 +230,62 @@ def test_pv_cost():
     assert pricing.cycle_cost(e, [], [], 1, 1, 99 * H) is None
 
 
+def test_handoff_washer_to_dryer():
+    import asyncio
+    import os
+    os.environ.setdefault("DATA_DIR", "/tmp/am_test_data")
+    import main
+
+    class Fake:
+        def __init__(self, apps):
+            self.appliances = {a.cfg["id"]: a for a in apps}
+            self.sent, self.unloaded = [], []
+
+        def unload(self, cid, source=""):
+            self.unloaded.append(cid)
+            self.appliances[cid].unload()
+            return True
+
+        async def notify(self, a, kind, info):
+            self.sent.append((kind, info))
+
+        def save_runtime(self):
+            pass
+
+    def setup():
+        w = make(handoff_to="dry", handoff_wait=20, handoff_repeat=40, handoff_max=2, remind_every=5)
+        w.cfg["id"], w.cfg["name"] = "wash", "Pralka"
+        d = make()
+        d.cfg["id"], d.cfg["name"] = "dry", "Suszarka"
+        ev = feed(w, 0, 1000, 100) + feed(w, 1000, 2000, 0)
+        assert w.state == FINISHED and "remind" not in kinds(ev)   # zwykłe przypomnienia wyłączone przy przekładaniu
+        return w, d, Fake([w, d])
+
+    async def run(f, t):
+        main.Monitor.handoff_check(f, list(f.appliances.values()), t)
+        await asyncio.sleep(0)
+
+    fin = lambda w: w.finished_at
+    # 1) suszarka rusza po końcu prania: pralka uznana za przełożoną, zero powiadomień
+    w, d, f = setup()
+    feed(d, fin(w) + 300, fin(w) + 900, 500)
+    assert d.state == RUNNING
+    asyncio.run(run(f, fin(w) + 1000))
+    assert f.unloaded == ["wash"] and w.state == IDLE and not f.sent
+    # 2) suszarka nie rusza: 1. przypomnienie po 20 min, 2. po kolejnych 40, potem koniec
+    w, d, f = setup()
+    asyncio.run(run(f, fin(w) + 19 * 60)); assert not f.sent
+    asyncio.run(run(f, fin(w) + 21 * 60)); assert len(f.sent) == 1 and f.sent[0][1]["target"] == "Suszarka"
+    asyncio.run(run(f, fin(w) + 50 * 60)); assert len(f.sent) == 1
+    asyncio.run(run(f, fin(w) + 61 * 60)); assert len(f.sent) == 2
+    asyncio.run(run(f, fin(w) + 200 * 60)); assert len(f.sent) == 2   # maks. 2
+    # 3) suszarka była już uruchomiona przed końcem prania: to nie jest przełożenie, przypomnienie z dopiskiem „zajęta"
+    w, d, f = setup()
+    feed(d, fin(w) - 3000, fin(w) + 100, 500)
+    asyncio.run(run(f, fin(w) + 21 * 60))
+    assert f.unloaded == [] and f.sent and f.sent[0][1]["busy"] is True
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

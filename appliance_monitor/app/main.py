@@ -20,7 +20,7 @@ import pricing
 import loan as loanlib
 import pvgain
 import programs
-from engine import (CFG_DEFAULTS, DEFAULT_MSG_FINISH, DEFAULT_MSG_REMIND, DEFAULT_MSG_START,
+from engine import (CFG_DEFAULTS, DEFAULT_MSG_FINISH, DEFAULT_MSG_HANDOFF, DEFAULT_MSG_REMIND, DEFAULT_MSG_START,
                     PRESETS, RUNNING, Appliance, entry_from_info, plural_cykl, render)
 from replay import replay
 
@@ -345,12 +345,12 @@ class Monitor:
         return f"{wh / 1000 * self.settings['price_per_kwh']:.2f} {self.settings['currency']}"
 
     # -- powiadomienia
-    async def send(self, targets, title, message, unload_for=None):
+    async def send(self, targets, title, message, unload_for=None, button="Wyjęte"):
         for t in targets:
             payload = {"title": title, "message": message}
             if unload_for and t.startswith("mobile_app_"):  # przyciski akcji znają tylko telefony z aplikacją HA
                 payload["data"] = {"tag": f"am_{unload_for}",
-                                   "actions": [{"action": ACTION_PREFIX + unload_for, "title": "Wyjęte"}]}
+                                   "actions": [{"action": ACTION_PREFIX + unload_for, "title": button}]}
             try:
                 await self.ha_post(f"/services/notify/{t}", payload)
             except Exception as e:
@@ -366,12 +366,14 @@ class Monitor:
             if c["notify_start"]:
                 lines.append(render(c["msg_start"], info))
         elif kind == "finish":
-            if c["notify_finish"]:
+            if c["notify_finish"] and not c.get("handoff_to"):  # przy przekładaniu do suszarki milczymy, dopóki ktoś nie zapomni
                 lines.append(render(c["msg_finish"], info))
             if info.get("anomaly") and c.get("notify_anomaly", True):
                 lines.append("⚠ " + info["anomaly"][:1].upper() + info["anomaly"][1:])
         elif kind == "remind":
             lines.append(render(c.get("msg_remind") or DEFAULT_MSG_REMIND, info))
+        elif kind == "handoff":
+            lines.append(render(c.get("msg_handoff") or DEFAULT_MSG_HANDOFF, info) + (" (zajęta)" if info.get("busy") else ""))
         if not lines or not c["notify_targets"]:
             return
         message = "\n".join(lines)
@@ -382,8 +384,30 @@ class Monitor:
                                      "targets": list(c["notify_targets"])})
                 save_json(DATA / "pending.json", self.pending)
             return
-        unload = c["id"] if kind in ("finish", "remind") and c.get("unload_button", True) else None
-        await self.send(c["notify_targets"], c["name"], message, unload)
+        unload = c["id"] if kind in ("finish", "remind", "handoff") and c.get("unload_button", True) else None
+        await self.send(c["notify_targets"], c["name"], message, unload, "Przełożone" if kind == "handoff" else "Wyjęte")
+
+    def handoff_check(self, apps, now):
+        """Pralka -> suszarka: gdy suszarka ruszyła po końcu prania, uznajemy je za przełożone (bez powiadomienia);
+        gdy nie, po handoff_wait minutach jedno przypomnienie, potem kolejne co handoff_repeat (maks. handoff_max)."""
+        for a in apps:
+            c = a.cfg
+            tid = c.get("handoff_to")
+            if not tid or a.state != "finished" or a.finished_at is None:
+                continue
+            t = self.appliances.get(tid)
+            if t is None or t is a:
+                continue
+            if t.state == RUNNING and t.cycle_start is not None and t.cycle_start >= a.finished_at - 60:
+                self.unload(c["id"], "suszarka ruszyła")
+                continue
+            n = a.reminders_sent
+            due = a.finished_at + (c.get("handoff_wait", 20) + n * c.get("handoff_repeat", 40)) * 60
+            if n < c.get("handoff_max", 2) and now >= due:
+                a.reminders_sent += 1
+                info = {"name": c["name"], "ago_s": now - a.finished_at, "target": t.cfg["name"], "busy": t.state == RUNNING}
+                asyncio.create_task(self.notify(a, "handoff", info))
+                self.save_runtime()
 
     async def flush_pending(self):
         items, self.pending = self.pending, []
@@ -594,6 +618,7 @@ class Monitor:
                 if kind in ("start", "finish", "remind"):
                     asyncio.create_task(self.notify(a, kind, info))
             self.publish_state(a, now)
+        self.handoff_check(apps, now)
         # w trakcie cyklu zapisujemy stan co minutę, żeby restart nie zgubił energii i wykresu
         if changed or (any(a.state == RUNNING for a in apps) and now - self.last_rt_save >= RUNTIME_SAVE_EVERY_S):
             self.save_runtime()
@@ -659,6 +684,11 @@ def clean_cfg(body):
         "remind_every": int(num("remind_every", 0, 1440, p.get("remind_every", 0))),
         "remind_max": int(num("remind_max", 1, 20, 3)),
         "msg_remind": str(body.get("msg_remind") or DEFAULT_MSG_REMIND)[:200],
+        "handoff_to": (lambda v: v if re.fullmatch(r"[a-z0-9_]{1,40}", v) else "")(str(body.get("handoff_to") or "")),
+        "handoff_wait": int(num("handoff_wait", 1, 600, 20)),
+        "handoff_repeat": int(num("handoff_repeat", 1, 600, 40)),
+        "handoff_max": int(num("handoff_max", 1, 10, 2)),
+        "msg_handoff": str(body.get("msg_handoff") or DEFAULT_MSG_HANDOFF)[:200],
         "quiet": bool(body.get("quiet", True)),
         "notify_anomaly": bool(body.get("notify_anomaly", True)),
     }
@@ -1040,7 +1070,7 @@ async def api_options(request):
     return web.json_response({
         "sensors": sensors, "energy": energy, "notify": notify, "presets": PRESETS,
         "default_msg_start": DEFAULT_MSG_START, "default_msg_finish": DEFAULT_MSG_FINISH,
-        "default_msg_remind": DEFAULT_MSG_REMIND,
+        "default_msg_remind": DEFAULT_MSG_REMIND, "default_msg_handoff": DEFAULT_MSG_HANDOFF,
     })
 
 

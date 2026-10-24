@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.17.0
+- Przekładanie prania: w ustawieniach pralki wybierasz „Po zakończeniu przełóż do” (np. suszarka). Pralka milczy po zakończeniu; jeśli suszarka włączy się po końcu prania, uznaję je za przełożone bez żadnego powiadomienia. Jeśli nie, po 20 min (do ustawienia) przychodzi jedno przypomnienie z przyciskiem „Przełożone”, kolejne po 40 min, maks. 2. Gdy suszarka jest zajęta, dopisek „(zajęta)”. Cisza nocna działa jak dotąd.
+
 ## 0.16.0
 - Osobna zakładka „🏦 Kredyt”: wykres salda kredytu (harmonogram z banku i Twój scenariusz), ile spłacone i ile zostało, symulator szybszej spłaty (stała miesięczna kwota, jednorazowa nadpłata, oprocentowanie) z datą końca, oszczędnością i łącznym kosztem. Harmonogram PDF wgrywasz tam lub w Statystykach.
 
